@@ -170,6 +170,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 .modal-msg{margin:10px 0 18px;color:var(--text)}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;flex-wrap:wrap}
 .ic-danger{color:var(--danger)!important}
+.passos{margin:0 0 14px 20px;color:var(--text);font-size:14px;line-height:1.9}
 /* ===== editores ===== */
 .w-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;align-items:center}
 .w-toolbar .btn-ic{width:32px;height:32px;flex-basis:32px}
@@ -376,7 +377,7 @@ const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 3; /* deve coincidir com VERSAO do Apps Script */
+const APP_VERSAO = 3; /* precisa coincidir com VERSAO do Apps Script */
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -497,6 +498,7 @@ function agendarPull(){
     }).catch(() => {});
   }, 3500);
 }
+let backendAntigo = false;
 const Sync = {
   url(){ const v = store.get('rio_gas_url'); return (v !== null && v !== '') ? v : DEFAULT_GAS_URL; },
   setUrl(u){ store.set('rio_gas_url', u || ''); atualizarBadge(); },
@@ -529,29 +531,28 @@ const Sync = {
     return true;
   }
 };
-/* Adota os dados do servidor como fonte da verdade (não apaga mais a planilha) */
 function adotarDados(data){
   if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
   if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
   FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
 }
-/* Sincronização inicial: consulta o Sheets ANTES de qualquer push.
-   - Servidor com dados  -> adota localmente, migra e devolve p/ criar pastas no Drive.
-   - Servidor vazio      -> envia os dados locais.
-   - Versão do Apps Script antiga -> avisa para criar NOVA VERSÃO da implantação. */
+/* Consulta o Sheets ANTES de qualquer push (fonte da verdade) */
 function sincronizarInicial(){
   if(!Sync.url()) return;
   Sync.pull().then(data => {
     if(!data) return;
-    if(data.__v === undefined || Number(data.__v) < APP_VERSAO){
-      toast('Apps Script desatualizado: copie o novo código em "Sobre" e crie uma NOVA VERSÃO da implantação para criar as pastas no Drive.','error');
+    const v = Number(data.__v || 0);
+    backendAntigo = v < APP_VERSAO;
+    if(backendAntigo){
+      toast('Backend Apps Script desatualizado: as subpastas no Drive não serão criadas até publicar a NOVA VERSÃO da implantação.','error');
+      if(currentUser()) modalBackendAntigo();
     }
     const temServidor = Array.isArray(data.Usuarios) && data.Usuarios.length > 0;
     if(temServidor){
       adotarDados(data);
       cleanupExemplos(true);
       migrateDados(true);
-      Sync.pushAll(); /* garante pastas espelhadas no Drive */
+      if(!backendAntigo) Sync.pushAll();
       const u = currentUser();
       if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); }
       else if(!$('#app').classList.contains('hidden')) renderApp();
@@ -559,6 +560,36 @@ function sincronizarInicial(){
       Sync.pushAll();
     }
   }).catch(() => {});
+}
+function verificarVersao(){
+  toast('Verificando versão do backend…','info');
+  return Sync.pull().then(data => {
+    const v = Number(data && data.__v || 0);
+    if(v >= APP_VERSAO){
+      backendAntigo = false;
+      fecharModal();
+      toast('Backend atualizado (v' + v + '). Criando pastas no Drive…');
+      Sync.pushAll();
+      return true;
+    }
+    modalBackendAntigo();
+    return false;
+  }).catch(() => { toast('Falha ao conectar no Apps Script. Verifique a URL.','error'); return false; });
+}
+function modalBackendAntigo(){
+  openModal('<h3><i class="fa-solid fa-triangle-exclamation ic-danger"></i> Backend desatualizado (subpastas não criam no Drive)</h3>' +
+    '<p class="modal-msg">O Apps Script publicado ainda é uma versão antiga. O app HTML foi atualizado, mas o Google continua executando o código velho. Faça o seguinte:</p>' +
+    '<ol class="passos">' +
+    '<li>Abra a sua planilha do Google Sheets e vá em <b>Extensões → Apps Script</b>.</li>' +
+    '<li>Apague TODO o código antigo e cole o código da tela <b>Sobre → "Copiar código"</b> (versão ' + APP_VERSAO + ').</li>' +
+    '<li>Clique no botão <b>Implantar</b> (ou "Gerenciar implantações").</li>' +
+    '<li>Clique no <b>lápis (editar)</b> da implantação e escolha <b>Versão: Nova versão</b> → <b>Implantar</b>. <b>Importante:</b> só colar o código NÃO atualiza a URL /exec — é preciso criar a nova versão!</li>' +
+    '<li>Volte aqui e clique em <b>Verificar novamente</b>.</li>' +
+    '</ol>' +
+    '<div class="modal-actions">' +
+    '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button>' +
+    '<button class="btn btn-light" data-action="fechar-modal">Agora não</button>' +
+    '<button class="btn btn-primary" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar novamente</button></div>');
 }
 
 /* ============ helpers de arquivo ============ */
@@ -901,7 +932,7 @@ document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
 
-/* ================= SEED / LIMPEZA / MIGRAÇÃO (somente local, sem push) ================= */
+/* ================= SEED / LIMPEZA / MIGRAÇÃO (somente local) ================= */
 function seed(){
   if (store.get('rio_seeded_v8')) return;
   if (DB.get('Empresa').length === 0) store.set('rio_Empresa', JSON.stringify([EMPRESA_PADRAO]));
@@ -913,11 +944,9 @@ function seed(){
   }
   store.set('rio_seeded_v8','1');
 }
-/* Remove antigos dados de exemplo SEM tocar no servidor */
 function cleanupExemplos(force){
   const FLAG = 'rio_cleaned_v8';
-  if (!force && store.get(FLAG)) return;
-  if (store.get(FLAG) && force) return;
+  if (store.get(FLAG)) return;
   const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
   const sampleFolders = ['f_pub','f_adm','f_rh','f_edi'];
   const sampleUsers = ['u_ana','u_carlos'];
@@ -935,8 +964,7 @@ function cleanupExemplos(force){
 }
 function migrateDados(force){
   const FLAG = 'rio_migrated_v8';
-  if (!force && store.get(FLAG)) return;
-  if (store.get(FLAG) && force) return;
+  if (store.get(FLAG)) return;
   let chP = false;
   const perms = DB.get('Permissoes').map(p => {
     if(p && Array.isArray(p.perms)) return p;
@@ -969,6 +997,8 @@ function ownerIsAdmin(p){
   return !o || ehAdmin(o);
 }
 function permsGlobais(u){ return (u.perms && u.perms.length ? u.perms : PRESETS.visualizador).slice(); }
+function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
+function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 function permsEff(userId, pasta){
   const u = getUsuarios().find(x => x.id === userId);
   if(!u || !pasta) return [];
@@ -1005,8 +1035,6 @@ function permsDoc(d){
   }
   return permsEff(u.id, pastaPorId(d.pastaId));
 }
-function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
-function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 function trilha(){
   const chain = []; let cur = pastaPorId(state.currentFolderId);
   while(cur){ chain.unshift(cur); cur = pastaPorId(cur.parentId); }
@@ -1064,6 +1092,7 @@ function iniciarApp(){
   $('#app').classList.remove('hidden');
   state.viewMode = 'detalhes';
   renderApp();
+  if(backendAntigo) modalBackendAntigo();
 }
 function renderApp(){
   const u = currentUser();
@@ -1575,7 +1604,8 @@ const SCRIPT_GAS =
 ' - Uploads entram na pasta correta; movimentações\n' +
 '   de arquivo movem o arquivo no Drive.\n' +
 ' IMPORTANTE: após colar este código, publique uma\n' +
-' NOVA VERSÃO da implantação (Gerenciar implantações).\n' +
+' NOVA VERSÃO da implantação (Gerenciar implantações),\n' +
+' senão a URL /exec continua executando o código velho.\n' +
 '=====================================================\n\n' +
 'var VERSAO = 3;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
@@ -1720,17 +1750,14 @@ function renderSobre(){
       '<span><i class="fa-solid fa-file-circle-check"></i>Uploads permitidos: .' + esc((e.formats || DEFAULT_FORMATS).join(', .')) + '</span>' +
     '</div></div>' +
   '</section>' +
-  '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões globais por usuário</b>, <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos</b>, <b>edição de DOCX/XLSX</b> e <b>digitalização pela câmera</b>. O Google Sheets é a fonte da verdade: ao abrir, o app baixa os dados do servidor e só envia os locais se o servidor estiver vazio — atualizar o app não apaga mais a planilha.</p>' +
-  '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">A URL oficial já vem pré-configurada. <b>Se as pastas não aparecerem no Drive</b>: 1) copie o código abaixo; 2) no Apps Script, salve e crie uma <b>NOVA VERSÃO da implantação</b> (Gerenciar implantações → Editar → Nova versão); 3) recarregue este app.</p>' +
+    '<p class="sobre-texto"><b>Se as subpastas não aparecem no Drive</b>, o Apps Script publicado está desatualizado. Passos: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>. Só colar o código NÃO atualiza a URL /exec!</p>' +
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
-    '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Sincronizar agora</button></div>' +
-  '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 3</h2>' +
+    '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
+  '</section>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 3</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2024,6 +2051,9 @@ document.addEventListener('click', e => {
     }
     case 'fechar-modal': fecharModal(); break;
     case 'confirmar-pendente': fecharModal(); if(acaoPendente){ const f = acaoPendente; acaoPendente = null; f(); } break;
+    case 'verificar-versao':
+      verificarVersao();
+      break;
     case 'salvar-pasta': {
       if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
       const nome = ($('#mNomePasta') || {}).value;
@@ -2107,17 +2137,6 @@ document.addEventListener('click', e => {
     case 'salvar-url':
       salvarUrl();
       break;
-    case 'testar-sync':
-      toast('Sincronizando com o Google Sheets...','info');
-      Sync.pushAll();
-      Sync.pull()
-        .then(data => {
-          if(!data.__v || Number(data.__v) < APP_VERSAO) toast('Apps Script desatualizado: crie uma NOVA VERSÃO da implantação.','error');
-          if(Sync.applyData(data)){ toast('Dados sincronizados do Sheets!'); aplicarMarca(); if(currentUser()) renderView(); else mostrarLogin(); }
-          else toast('Servidor vazio — dados locais enviados para o Sheets/Drive.','info');
-        })
-        .catch(() => toast('Falha ao conectar no Apps Script. Verifique a URL.','error'));
-      break;
   }
 });
 
@@ -2190,14 +2209,12 @@ $('#loginForm').addEventListener('submit', e => {
 
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
-/* ================= BOOT =================
-   Ordem segura: prepara o local SEM enviar nada ao servidor e,
-   somente depois, consulta o Sheets (fonte da verdade). */
+/* ================= BOOT ================= */
 seed();
 cleanupExemplos(false);
 migrateDados(false);
-if(currentUser()) iniciarApp(); else mostrarLogin();
-sincronizarInicial();
+if(currentUser()) iniciarApp(); else { mostrarLogin(); sincronizarInicial(); }
+if(currentUser()) sincronizarInicial();
 </script>
 </body>
 </html>
