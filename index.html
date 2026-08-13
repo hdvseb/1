@@ -52,9 +52,6 @@ button{font-family:inherit}
 .campo input:disabled{background:#eef1f6;color:#7a8aa8}
 .campo input:focus,.campo textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.15)}
 .erro{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:6px}
-.demo-box{margin-top:14px;background:#fff8e8;border:1px dashed #e8c98a;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#7a5a17}
-.demo-box strong{display:block;margin-bottom:6px;color:#8a6a2f}
-.demo-box small{display:block;margin-top:6px;color:#96763a}
 /* ===== shell ===== */
 .topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
 .topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
@@ -343,11 +340,6 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
     <button id="btnBuscar" class="btn btn-light btn-block hidden" style="margin-top:10px" data-action="buscar-dados"><i class="fa-solid fa-rotate"></i> Buscar dados da planilha</button>
-    <div id="tempBox" class="demo-box hidden">
-      <strong><i class="fa-solid fa-user-clock"></i> Acesso temporário (planilha sem usuários)</strong>
-      E-mail: <b>admin@temporario.com</b> · Senha: <b>admin123</b>
-      <small>Após entrar, cadastre os usuários reais em "Gerenciar Usuários" e exclua este acesso temporário.</small>
-    </div>
   </div>
 </div>
 
@@ -385,7 +377,6 @@ const iniciais = n => String(n||'?').split(' ').map(p=>p[0]).slice(0,2).join('')
 const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
-const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const APP_VERSAO = 5;
 const store = {
@@ -536,7 +527,7 @@ function pullViaJSONP(url){
 }
 let backendAntigo = false;
 const Sync = {
-  url(){ const v = store.get('rio_gas_url'); return (v !== null && v !== '') ? v : DEFAULT_GAS_URL; },
+  url(){ return store.get('rio_gas_url') || ''; },
   setUrl(u){ store.set('rio_gas_url', u || ''); atualizarBadge(); },
   push(f, rows){
     const url = this.url(); if(!url) return;
@@ -584,23 +575,14 @@ function adotarDados(data){
     ['Pastas','Documentos'].forEach(f => { if(Array.isArray(data[f])) guardarFolhaSeguro(f, mesclarRows(DB.get(f), data[f])); });
   }catch(e){}
 }
-/* Usuário temporário: criado apenas quando a planilha não tem usuários. */
-const TEMP_USER = {id:'u_temp', nome:'Administrador Temporário', email:'admin@temporario.com', senha:'admin123', papel:'master', perms: ALL_PERMS.slice()};
-function garantirUsuarioTemporario(push){
-  if(getUsuarios().length) return false;
-  const t = Object.assign({}, TEMP_USER, {criadoEm: Date.now()});
-  store.set('rio_Usuarios', JSON.stringify([t]));
-  if(push) Sync.push('Usuarios', [t]);
-  return true;
-}
 /* Busca os dados da planilha para a tela de login (logotipo, empresa, usuários). */
 function buscarDadosLogin(){
   const st = $('#loginStatus');
   const btn = $('#btnBuscar');
   const setStatus = (html, cls) => { if(st){ st.innerHTML = html; st.className = 'login-status' + (cls ? ' ' + cls : ''); } };
   if(!Sync.url()){
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Sem URL de integração — usando dados locais.', 'erro');
-    garantirUsuarioTemporario(false); mostrarLogin();
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Nenhuma planilha configurada. Configure a URL de integração em "Sobre" para poder entrar.', 'erro');
+    mostrarLogin();
     return;
   }
   setStatus('<i class="fa-solid fa-spinner fa-spin"></i> Conectando à planilha…');
@@ -611,8 +593,11 @@ function buscarDadosLogin(){
       const v = Number(data.__v || 0);
       backendAntigo = v < APP_VERSAO;
       Sync.applyData(data);
-      if(!(Array.isArray(data.Usuarios) && data.Usuarios.length)) garantirUsuarioTemporario(true);
-      setStatus('<i class="fa-solid fa-circle-check"></i> Dados da planilha carregados.', 'ok');
+      if(Array.isArray(data.Usuarios) && data.Usuarios.length){
+        setStatus('<i class="fa-solid fa-circle-check"></i> Dados da planilha carregados.', 'ok');
+      } else {
+        setStatus('<i class="fa-solid fa-circle-exclamation"></i> A planilha ainda não tem nenhum usuário cadastrado na aba "Usuarios".', 'erro');
+      }
       if(backendAntigo) toast('Backend Apps Script desatualizado: publique a NOVA VERSÃO da implantação (versão ' + APP_VERSAO + ').','error');
     } else {
       setStatus('<i class="fa-solid fa-circle-exclamation"></i> Resposta inválida da planilha.', 'erro');
@@ -620,8 +605,7 @@ function buscarDadosLogin(){
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   }).catch(() => {
-    garantirUsuarioTemporario(false);
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique a URL em um navegador com internet.', 'erro');
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique a URL em "Sobre" e sua conexão com a internet.', 'erro');
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   });
@@ -641,13 +625,11 @@ function sincronizarInicial(){
       migrateDados();
       if(!backendAntigo) Sync.pushAll();
     }
-    if(!(Array.isArray(data.Usuarios) && data.Usuarios.length)) garantirUsuarioTemporario(true);
     const u = currentUser();
     if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); buscarDadosLogin(); }
     else if(!$('#app').classList.contains('hidden')) renderApp();
     else aplicarMarca();
   }).catch(() => {
-    garantirUsuarioTemporario(false);
     const u = currentUser();
     if(!u){ mostrarLogin(); } else if(!$('#app').classList.contains('hidden')) renderApp();
   });
@@ -1178,9 +1160,6 @@ function mostrarLogin(){
   state.view = 'dashboard'; state.currentFolderId = null; state.search = '';
   state.viewMode = 'detalhes';
   aplicarMarca();
-  const us = getUsuarios();
-  const temp = us.find(x => x.id === 'u_temp');
-  $('#tempBox').classList.toggle('hidden', !(temp && us.length === 1));
 }
 function iniciarApp(){
   $('#loginScreen').classList.add('hidden');
@@ -1245,7 +1224,7 @@ function atualizarBadge(){
   const on = !!Sync.url();
   const html = on
     ? '<span class="sync on"><i class="fa-solid fa-circle"></i> Sheets/Drive conectado</span>'
-    : '<span class="sync off"><i class="fa-solid fa-circle"></i> Modo demonstração</span>';
+    : '<span class="sync off"><i class="fa-solid fa-circle"></i> Sem planilha configurada</span>';
   const b1 = $('#syncBadge');  if(b1) b1.innerHTML = html;
   const b2 = $('#syncBadge2'); if(b2) b2.innerHTML = html;
 }
@@ -1444,7 +1423,7 @@ function modalDoc(docId){
         '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>'
       : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12"></textarea></label>' +
         '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
-        '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+        '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>'));
   setTimeout(() => { const i = $('#mTitulo'); if(i) i.focus(); }, 60);
 }
 function modalEditarUsuario(userId){
@@ -1670,7 +1649,7 @@ function renderUsuarios(){
           '<option value="' + p + '"' + (x.papel === p ? ' selected' : '') + '>' + PAPEIS[p] + '</option>').join('') + '</select>'
       : '<span class="tag ' + (x.papel === 'master' ? 'tag-admin' : 'tag-view') + '">' + PAPEIS[x.papel] + '</span>';
     return '<tr>' +
-      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + (x.id === 'u_temp' ? ' <span class="tag tag-view">temporário</span>' : '') + '</strong></div></td>' +
+      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + '</strong></div></td>' +
       '<td>' + esc(x.email) + '</td>' +
       '<td>' + selectPapel + '</td>' +
       '<td>' + (x.papel === 'master' ? '<span class="tag tag-admin">Todas</span>' : icoPerms(x.perms || [])) + '</td>' +
@@ -1882,7 +1861,7 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>fetch ou JSONP</b>. Se a planilha não tiver usuários, um <b>usuário temporário</b> é criado. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
+    '<p class="sobre-texto">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>fetch ou JSONP</b>. É necessário cadastrar ao menos um usuário na aba <b>Usuarios</b> da planilha para conseguir entrar. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
@@ -2352,18 +2331,15 @@ $('#loginForm').addEventListener('submit', e => {
     if(st){ st.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verificando usuários na planilha…'; st.className = 'login-status'; }
     Sync.pull().then(data => {
       if(data && typeof data === 'object') Sync.applyData(data);
-      if(!(Array.isArray(data && data.Usuarios) && data.Usuarios.length)) garantirUsuarioTemporario(true);
       aplicarMarca(); mostrarLogin();
       if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
     }).catch(() => {
-      garantirUsuarioTemporario(false);
       aplicarMarca(); mostrarLogin();
-      if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
+      $('#loginErro').textContent = 'Não foi possível verificar a planilha. Tente novamente.';
     });
   } else {
-    garantirUsuarioTemporario(false);
     mostrarLogin();
-    if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
+    $('#loginErro').textContent = 'Nenhuma planilha configurada. Configure a URL de integração em "Sobre" para poder entrar.';
   }
 });
 
@@ -2371,7 +2347,7 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
 
 /* ================= BOOT =================
    Sempre busca os dados da planilha ao abrir (logotipo, empresa, usuários).
-   Se a planilha não tiver usuários, cria o usuário temporário. */
+   O login só funciona com usuários reais cadastrados na aba "Usuarios". */
 try{
   seed();
   cleanupExemplos();
