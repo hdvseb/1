@@ -356,7 +356,6 @@ const store = {
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
   set(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ this._m[k] = v; return false; } }
 };
-/* grava com proteção de cota: se estourar, remove base64 grandes e tenta de novo */
 function guardarFolhaSeguro(f, rows){
   if(store.set('rio_'+f, JSON.stringify(rows))) return true;
   try{
@@ -475,7 +474,7 @@ function agendarPull(){
           if(d && d.driveId) delete pendingArquivos[id];
         });
         if(!$('#modalOverlay') || $('#modalOverlay').classList.contains('hidden')){
-          if(currentUser()) renderView();
+          if(currentUser()) renderApp();
           else { session = null; store.set('rio_session',''); mostrarLogin(); }
         }
       }
@@ -501,7 +500,6 @@ const Sync = {
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
-  /* garante que a pasta principal SGD_Arquivos exista no Drive */
   ensureDriveRoot(){
     const url = this.url(); if(!url) return;
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -536,8 +534,6 @@ function adotarDados(data){
     });
   }catch(e){}
 }
-/* Sincronização inicial: consulta o Sheets ANTES de qualquer push (fonte da verdade),
-   garante a pasta principal no Drive e espelha as pastas. */
 function sincronizarInicial(){
   if(!Sync.url()) return;
   Sync.ensureDriveRoot();
@@ -721,7 +717,7 @@ function imprimirDoc(d){
     else if(cat === 'txt' || cat === 'sheet') texto = dataURLTexto(d.arquivo);
     const w = window.open('', '_blank');
     if(!w){ toast('Permita pop-ups para imprimir.','error'); return; }
-    if(cat === 'word' && window.mammoth && d.arquivo){
+    if(cat === 'word' && d.arquivo && window.mammoth){
       window.mammoth.convertToHtml({arrayBuffer: b64ToBytes(d.arquivo.split(',')[1]).buffer}).then(res => {
         w.document.write('<html><head><title>' + esc(d.titulo) + '</title></head><body style="font-family:Arial;padding:40px">' + cabecalhoImpressao() + res.value + '<scr'+'ipt>window.onload=function(){window.print()}<\/scr'+'ipt></body></html>');
         w.document.close();
@@ -933,7 +929,6 @@ document.addEventListener('dragstart', e => {
 document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
-/* evita tela em branco silenciosa: qualquer erro vira toast + cartão de erro */
 window.addEventListener('error', e => {
   try{ toast('Erro: ' + (e.message || 'desconhecido'), 'error'); }catch(err){}
 });
@@ -991,6 +986,8 @@ function migrateDados(){
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
 try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
+/* A navegação usa SEMPRE este estado; o conteúdo é renderizado a partir dele,
+   garantindo que o título corresponda ao item ativo do menu. */
 const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
 let currentBlobUrl = null;
 let cfgLogo = null;
@@ -1097,8 +1094,17 @@ function iniciarApp(){
   $('#loginScreen').classList.add('hidden');
   $('#app').classList.remove('hidden');
   state.viewMode = 'detalhes';
+  state.view = 'dashboard';
   renderApp();
   if(backendAntigo) modalBackendAntigo();
+}
+/* Navegação centralizada: define a tela e re-renderiza menu + conteúdo juntos,
+   evitando qualquer dessincronia entre menu ativo e conteúdo exibido. */
+function navigate(view){
+  state.view = view;
+  state.search = '';
+  $('#sidebar').classList.remove('open');
+  renderApp();
 }
 function renderApp(){
   const u = currentUser();
@@ -1122,17 +1128,23 @@ function renderSidebar(){
     '<button class="nav-item ' + (state.view === i.view ? 'active' : '') + '" data-action="nav" data-view="' + i.view + '"><i class="fa-solid ' + i.ic + '"></i> ' + i.label + '</button>'
   ).join('');
 }
+function effectiveView(){
+  const u = currentUser();
+  if(!u) return null;
+  if(state.view === 'config' && !ehAdmin(u)) return 'dashboard';
+  if(state.view === 'sobre'  && !ehAdmin(u)) return 'dashboard';
+  return state.view;
+}
 function renderView(){
   try{
     const u = currentUser();
     if(!u){ mostrarLogin(); return; }
-    if(state.view === 'config' && !ehAdmin(u)) state.view = 'dashboard';
-    if(state.view === 'sobre'  && !ehAdmin(u)) state.view = 'dashboard';
-    if(state.view === 'dashboard') renderDashboard();
-    else if(state.view === 'usuarios') renderUsuarios();
-    else if(state.view === 'perfil') renderPerfil();
-    else if(state.view === 'config') renderConfig();
-    else renderSobre();
+    const v = effectiveView();
+    if(v === 'usuarios') renderUsuarios();
+    else if(v === 'perfil') renderPerfil();
+    else if(v === 'config') renderConfig();
+    else if(v === 'sobre') renderSobre();
+    else renderDashboard();
   }catch(err){
     $('#viewRoot').innerHTML = '<div class="view"><div class="vazio"><i class="fa-solid fa-triangle-exclamation"></i>' +
       '<p>Erro ao carregar a tela: ' + esc(err && err.message ? err.message : err) + '</p>' +
@@ -1808,7 +1820,8 @@ document.addEventListener('click', e => {
     case 'logout':
       session = null; store.set('rio_session',''); mostrarLogin(); break;
     case 'nav':
-      state.view = el.dataset.view; state.search = ''; $('#sidebar').classList.remove('open'); renderApp(); break;
+      navigate(el.dataset.view);
+      break;
     case 'menu-view': {
       const p = $('#viewPop'); if(p) p.classList.toggle('open');
       break;
