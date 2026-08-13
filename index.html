@@ -1074,6 +1074,14 @@ function migrateDados(){
 let session = null;
 try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
 const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
+const VIEW_MODES = [
+  {m:'xg',       label:'Ícones extra grandes', ic:'fa-table-cells-large'},
+  {m:'g',        label:'Ícones grandes',       ic:'fa-table-cells'},
+  {m:'m',        label:'Ícones médios',        ic:'fa-grip'},
+  {m:'p',        label:'Ícones pequenos',      ic:'fa-grip-lines'},
+  {m:'lista',    label:'Lista',                ic:'fa-list'},
+  {m:'detalhes', label:'Detalhes',             ic:'fa-table-list'}
+];
 let currentBlobUrl = null;
 let cfgLogo = null;
 
