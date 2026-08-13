@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prefeitura do Rio — Gestão de Documentos</title>
+<title>Gestão de Documentos</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-400-normal.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-600-normal.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-700-normal.css">
@@ -48,6 +48,9 @@ button{font-family:inherit}
 .campo input:disabled{background:#eef1f6;color:#7a8aa8}
 .campo input:focus,.campo textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.15)}
 .erro{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:6px}
+.demo-box{margin-top:18px;background:#fff8e8;border:1px dashed #e8c98a;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#7a5a17}
+.demo-box strong{display:block;margin-bottom:6px;color:#8a6a2f}
+.demo-box small{display:block;margin-top:6px;color:#96763a}
 /* ===== shell ===== */
 .topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
 .topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
@@ -322,7 +325,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 <!-- ==================== LOGIN ==================== -->
 <div id="loginScreen" class="login-screen">
   <div class="login-card">
-    <img id="loginLogo" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
+    <img id="loginLogo" alt="Logotipo">
     <h1>Gestão de Documentos</h1>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
@@ -334,6 +337,11 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <div id="loginErro" class="erro"></div>
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
+    <div id="tempBox" class="demo-box hidden">
+      <strong><i class="fa-solid fa-user-clock"></i> Acesso temporário criado (planilha sem usuários)</strong>
+      E-mail: <b>admin@temporario.com</b> · Senha: <b>admin123</b>
+      <small>Após entrar, cadastre os usuários reais em "Gerenciar Usuários" e exclua este acesso temporário.</small>
+    </div>
   </div>
 </div>
 
@@ -341,7 +349,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 <div id="app" class="hidden">
   <header class="topbar">
     <button class="menu-toggle" id="menuToggle" title="Menu"><i class="fa-solid fa-bars"></i></button>
-    <img class="logo-rio" id="logoRio" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
+    <img class="logo-rio" id="logoRio" alt="Logotipo">
     <div class="topbar-right">
       <span id="syncBadge"></span>
       <span class="user-hello" id="userName"></span>
@@ -370,7 +378,8 @@ const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<'
 const iniciais = n => String(n||'?').split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
 const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
-const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
+/* Placeholder neutro (sem dados de exemplo): usado apenas enquanto a planilha não define logotipo. */
+const PLACEHOLDER_LOGO = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="220" height="90"><rect width="220" height="90" rx="12" fill="#eef2f7"/><rect x="88" y="16" width="44" height="56" rx="6" fill="#1552c2"/><rect x="96" y="28" width="28" height="4" rx="2" fill="#fff"/><rect x="96" y="38" width="28" height="4" rx="2" fill="#fff"/><rect x="96" y="48" width="20" height="4" rx="2" fill="#fff"/></svg>');
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const APP_VERSAO = 5;
@@ -404,12 +413,10 @@ function formatoVisivel(d, u){
 }
 function colLetter(n){ let s=''; n++; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; }
 
-/* ===== EMPRESA ===== */
+/* ===== EMPRESA (sem dados de exemplo: tudo vem da planilha) ===== */
 const EMPRESA_PADRAO = {
-  nome:'Prefeitura da Cidade do Rio de Janeiro', fantasia:'Rio Prefeitura', cnpj:'01.234.567/0001-80',
-  endereco:'Av. Presidente Vargas, nº 1100 - Centro', cidade:'Rio de Janeiro - RJ', cep:'20210-000',
-  telefone:'(21) 3456-7890', email:'contato@rio.gov.br', site:'www.rio.gov.br',
-  responsavel:'Master Admin', logo: LOGO_PADRAO, formats: DEFAULT_FORMATS.slice()
+  nome:'', fantasia:'', cnpj:'', endereco:'', cidade:'', cep:'',
+  telefone:'', email:'', site:'', responsavel:'', logo:'', formats: DEFAULT_FORMATS.slice()
 };
 function getEmpresa(){ return Object.assign({}, EMPRESA_PADRAO, DB.get('Empresa')[0] || {}); }
 function setEmpresa(obj){ guardarFolhaSeguro('Empresa', [obj]); Sync.push('Empresa', [obj]); }
@@ -510,7 +517,6 @@ function agendarPull(){
     }).catch(() => {});
   }, 3500);
 }
-/* JSONP: funciona mesmo quando o fetch/CORS é bloqueado (arquivo local, navegadores restritivos). */
 function pullViaJSONP(url){
   return new Promise((res, rej) => {
     const fnName = 'sgd_cb_' + Date.now() + Math.floor(Math.random()*999);
@@ -573,7 +579,16 @@ function adotarDados(data){
     ['Pastas','Documentos'].forEach(f => { if(Array.isArray(data[f])) guardarFolhaSeguro(f, mesclarRows(DB.get(f), data[f])); });
   }catch(e){}
 }
-/* Busca os dados da planilha (inclusive na tela de login) e aplica a marca (logotipo). */
+/* Usuário temporário: criado apenas quando a planilha não tem usuários. */
+const TEMP_USER = {id:'u_temp', nome:'Administrador Temporário', email:'admin@temporario.com', senha:'admin123', papel:'master', perms: ALL_PERMS.slice()};
+function garantirUsuarioTemporario(push){
+  if(getUsuarios().length) return false;
+  const t = Object.assign({}, TEMP_USER, {criadoEm: Date.now()});
+  store.set('rio_Usuarios', JSON.stringify([t]));
+  if(push) Sync.push('Usuarios', [t]);
+  return true;
+}
+/* Busca sempre os dados da planilha (login, logotipo, usuários). */
 function sincronizarInicial(retry){
   if(!Sync.url()) return;
   Sync.ensureDriveRoot();
@@ -591,11 +606,17 @@ function sincronizarInicial(retry){
       migrateDados();
       if(!backendAntigo) Sync.pushAll();
     }
+    if(!(Array.isArray(data.Usuarios) && data.Usuarios.length)){
+      if(garantirUsuarioTemporario(true)) toast('Planilha sem usuários: acesso temporário criado (admin@temporario.com / admin123).','info');
+    }
     const u = currentUser();
     if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); }
     else if(!$('#app').classList.contains('hidden')) renderApp();
     else aplicarMarca();
   }).catch(() => {
+    if(garantirUsuarioTemporario(false)) toast('Sem conexão com a planilha: acesso temporário criado (admin@temporario.com / admin123).','info');
+    const u = currentUser();
+    if(!u){ mostrarLogin(); } else if(!$('#app').classList.contains('hidden')) renderApp();
     if(!retry) setTimeout(() => sincronizarInicial(true), 2500);
   });
 }
@@ -745,10 +766,10 @@ function baixarArquivo(d){
 function cabecalhoImpressao(){
   const e = getEmpresa();
   return '<div style="text-align:center;border-bottom:2px solid #1552c2;padding-bottom:10px;margin-bottom:18px">' +
-    '<img src="' + esc(e.logo) + '" style="height:48px;object-fit:contain"><br>' +
-    '<strong style="font-size:15px">' + esc(e.nome) + '</strong><br>' +
-    '<small>' + esc(e.endereco) + ' - ' + esc(e.cidade) + ' • CEP ' + esc(e.cep) + '<br>' +
-    'Tel: ' + esc(e.telefone) + ' • ' + esc(e.email) + ' • ' + esc(e.site) + ' • CNPJ: ' + esc(e.cnpj) + '</small></div>';
+    '<img src="' + esc(e.logo || PLACEHOLDER_LOGO) + '" style="height:48px;object-fit:contain"><br>' +
+    '<strong style="font-size:15px">' + esc(e.nome || 'Gestão de Documentos') + '</strong><br>' +
+    '<small>' + esc(e.endereco) + (e.cidade ? ' - ' + esc(e.cidade) : '') + (e.cep ? ' • CEP ' + esc(e.cep) : '') + '<br>' +
+    (e.telefone ? 'Tel: ' + esc(e.telefone) + ' • ' : '') + (e.email ? esc(e.email) + ' • ' : '') + (e.site ? esc(e.site) + ' • ' : '') + 'CNPJ: ' + esc(e.cnpj || '—') + '</small></div>';
 }
 function imprimirDoc(d){
   const cat = categoria(d);
@@ -974,20 +995,14 @@ window.addEventListener('error', e => {
   try{ toast('Erro: ' + (e.message || 'desconhecido'), 'error'); }catch(err){}
 });
 
-/* ================= SEED / LIMPEZA / MIGRAÇÃO ================= */
+/* ================= SEED / LIMPEZA / MIGRAÇÃO (sem dados de exemplo) ================= */
 function seed(){
-  if (store.get('rio_seeded_v8')) return;
+  if (store.get('rio_seeded_v9')) return;
   if (DB.get('Empresa').length === 0) store.set('rio_Empresa', JSON.stringify([EMPRESA_PADRAO]));
-  if (DB.get('Usuarios').length === 0){
-    store.set('rio_Usuarios', JSON.stringify([{
-      id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123',
-      papel:'master', perms:ALL_PERMS.slice(), criadoEm:Date.now()
-    }]));
-  }
-  store.set('rio_seeded_v8','1');
+  store.set('rio_seeded_v9','1');
 }
 function cleanupExemplos(){
-  const FLAG = 'rio_cleaned_v8';
+  const FLAG = 'rio_cleaned_v9';
   if (store.get(FLAG)) return;
   const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
   const sampleFolders = ['f_pub','f_adm','f_rh','f_edi'];
@@ -1001,7 +1016,7 @@ function cleanupExemplos(){
     .map(p => sampleFolders.includes(p.parentId) ? Object.assign({}, p, {parentId: null}) : p);
   guardarFolhaSeguro('Pastas', pastas);
   guardarFolhaSeguro('Permissoes', DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId)));
-  guardarFolhaSeguro('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
+  guardarFolhaSeguro('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id) && x.email !== 'master@admin.rio.gov.br'));
   store.set(FLAG,'1');
 }
 function migrateDados(){
@@ -1118,9 +1133,10 @@ $('#modalOverlay').addEventListener('click', e => { if(e.target === $('#modalOve
 /* ================= RENDER GERAL ================= */
 function aplicarMarca(){
   const e = getEmpresa();
-  $('#logoRio').src = e.logo; $('#logoRio').title = e.nome;
-  const ll = $('#loginLogo'); if(ll) ll.src = e.logo;
-  document.title = e.fantasia + ' — Gestão de Documentos';
+  const logo = e.logo || PLACEHOLDER_LOGO;
+  $('#logoRio').src = logo; $('#logoRio').title = e.nome || 'Gestão de Documentos';
+  const ll = $('#loginLogo'); if(ll) ll.src = logo;
+  document.title = (e.fantasia ? e.fantasia + ' — ' : '') + 'Gestão de Documentos';
 }
 function mostrarLogin(){
   $('#app').classList.add('hidden');
@@ -1128,6 +1144,9 @@ function mostrarLogin(){
   state.view = 'dashboard'; state.currentFolderId = null; state.search = '';
   state.viewMode = 'detalhes';
   aplicarMarca();
+  const us = getUsuarios();
+  const temp = us.find(x => x.id === 'u_temp');
+  $('#tempBox').classList.toggle('hidden', !(temp && us.length === 1));
 }
 function iniciarApp(){
   $('#loginScreen').classList.add('hidden');
@@ -1556,7 +1575,7 @@ function cfgCampo(id, label, valor){
 function renderConfig(){
   const e = getEmpresa();
   const fmtAtuais = Array.isArray(e.formats) && e.formats.length ? e.formats : DEFAULT_FORMATS;
-  cfgLogo = e.logo || LOGO_PADRAO;
+  cfgLogo = e.logo || PLACEHOLDER_LOGO;
   $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Configurações</h1>' +
   '<div class="grid-2">' +
     '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-building"></i> Dados cadastrais da empresa</h2></div>' +
@@ -1617,7 +1636,7 @@ function renderUsuarios(){
           '<option value="' + p + '"' + (x.papel === p ? ' selected' : '') + '>' + PAPEIS[p] + '</option>').join('') + '</select>'
       : '<span class="tag ' + (x.papel === 'master' ? 'tag-admin' : 'tag-view') + '">' + PAPEIS[x.papel] + '</span>';
     return '<tr>' +
-      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + '</strong></div></td>' +
+      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + (x.id === 'u_temp' ? ' <span class="tag tag-view">temporário</span>' : '') + '</strong></div></td>' +
       '<td>' + esc(x.email) + '</td>' +
       '<td>' + selectPapel + '</td>' +
       '<td>' + (x.papel === 'master' ? '<span class="tag tag-admin">Todas</span>' : icoPerms(x.perms || [])) + '</td>' +
@@ -1662,7 +1681,7 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
-/* ===== BACKEND APPS SCRIPT (VERSAO 5 - com JSONP) ===== */
+/* ===== BACKEND APPS SCRIPT (VERSAO 5 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
 ' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 5)\n' +
@@ -1820,16 +1839,16 @@ function renderSobre(){
   const url = Sync.url();
   const e = getEmpresa();
   $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Sobre</h1>' +
-  '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-building"></i> ' + esc(e.fantasia) + '</h2></div>' +
+  '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-building"></i> ' + esc(e.fantasia || 'Gestão de Documentos') + '</h2></div>' +
     '<div class="sobre-texto"><div class="empresa-resumo">' +
-      '<span><i class="fa-solid fa-signature"></i>' + esc(e.nome) + ' • CNPJ ' + esc(e.cnpj) + '</span>' +
-      '<span><i class="fa-solid fa-location-dot"></i>' + esc(e.endereco) + ' - ' + esc(e.cidade) + ' • CEP ' + esc(e.cep) + '</span>' +
-      '<span><i class="fa-solid fa-phone"></i>' + esc(e.telefone) + ' • <i class="fa-solid fa-envelope"></i>' + esc(e.email) + ' • <i class="fa-solid fa-globe"></i>' + esc(e.site) + '</span>' +
+      '<span><i class="fa-solid fa-signature"></i>' + esc(e.nome || '—') + (e.cnpj ? ' • CNPJ ' + esc(e.cnpj) : '') + '</span>' +
+      (e.endereco ? '<span><i class="fa-solid fa-location-dot"></i>' + esc(e.endereco) + (e.cidade ? ' - ' + esc(e.cidade) : '') + (e.cep ? ' • CEP ' + esc(e.cep) : '') + '</span>' : '') +
+      (e.telefone || e.email || e.site ? '<span>' + (e.telefone ? '<i class="fa-solid fa-phone"></i>' + esc(e.telefone) + ' • ' : '') + (e.email ? '<i class="fa-solid fa-envelope"></i>' + esc(e.email) + ' • ' : '') + (e.site ? '<i class="fa-solid fa-globe"></i>' + esc(e.site) : '') + '</span>' : '') +
       '<span><i class="fa-solid fa-file-circle-check"></i>Uploads permitidos: .' + esc((e.formats || DEFAULT_FORMATS).join(', .')) + '</span>' +
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">A tela de login busca os dados da planilha (empresa/logotipo/usuários) via <b>fetch ou JSONP</b>. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
+    '<p class="sobre-texto">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>fetch ou JSONP</b>. Se a planilha não tiver usuários, um <b>usuário temporário</b> é criado. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
@@ -1854,7 +1873,6 @@ document.addEventListener('click', e => {
   const id = el.dataset.id || null;
   const u = currentUser();
 
-  if(a === 'preencher'){ $('#loginEmail').value = el.dataset.email; $('#loginSenha').value = el.dataset.senha; return; }
   if(a === 'recarregar'){ location.reload(); return; }
   if(!u) return;
 
@@ -2096,7 +2114,7 @@ document.addEventListener('click', e => {
     }
     case 'trocar-logo': { const inp = $('#logoInput'); if(inp) inp.click(); break; }
     case 'reset-logo':
-      cfgLogo = LOGO_PADRAO;
+      cfgLogo = PLACEHOLDER_LOGO;
       const pv1 = $('#cfgLogoPrev'); if(pv1) pv1.src = cfgLogo;
       toast('Logotipo padrão restaurado — clique em Salvar alterações.','info');
       break;
@@ -2111,7 +2129,7 @@ document.addEventListener('click', e => {
       const formats = $$('#viewRoot input[data-fmt]:checked').map(i => i.dataset.fmt);
       if(!formats.length){ toast('Selecione ao menos um formato de upload.','error'); break; }
       const obj = Object.assign({}, getEmpresa(), {
-        nome: $('#cfgNome').value.trim() || EMPRESA_PADRAO.nome,
+        nome: $('#cfgNome').value.trim(),
         fantasia: $('#cfgFantasia').value.trim(),
         cnpj: $('#cfgCnpj').value.trim(),
         responsavel: $('#cfgResp').value.trim(),
@@ -2121,7 +2139,7 @@ document.addEventListener('click', e => {
         telefone: $('#cfgTel').value.trim(),
         email: $('#cfgEmail').value.trim(),
         site: $('#cfgSite').value.trim(),
-        logo: cfgLogo || LOGO_PADRAO,
+        logo: cfgLogo || '',
         formats: formats
       });
       try{ setEmpresa(obj); }catch(err){ toast('Logotipo muito grande para o armazenamento local.','error'); break; }
@@ -2274,7 +2292,7 @@ document.addEventListener('change', e => {
   }
 });
 
-/* LOGIN com fallback: busca os usuários na planilha (fetch ou JSONP) antes de negar. */
+/* LOGIN: busca os usuários na planilha (fetch ou JSONP) antes de negar. */
 $('#loginForm').addEventListener('submit', e => {
   e.preventDefault();
   const email = $('#loginEmail').value.trim().toLowerCase();
@@ -2297,19 +2315,27 @@ $('#loginForm').addEventListener('submit', e => {
     toast('Verificando usuários e dados da empresa no servidor…','info');
     Sync.pull().then(data => {
       if(data && typeof data === 'object') Sync.applyData(data);
+      if(!(Array.isArray(data && data.Usuarios) && data.Usuarios.length)) garantirUsuarioTemporario(true);
       aplicarMarca();
+      mostrarLogin();
       if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
-    }).catch(() => { $('#loginErro').textContent = 'E-mail ou senha inválidos.'; });
+    }).catch(() => {
+      garantirUsuarioTemporario(false);
+      mostrarLogin();
+      if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
+    });
   } else {
-    $('#loginErro').textContent = 'E-mail ou senha inválidos.';
+    garantirUsuarioTemporario(false);
+    mostrarLogin();
+    if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
   }
 });
 
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
 /* ================= BOOT =================
-   A sincronização inicial roda também na tela de login, para buscar
-   logotipo/dados da empresa da planilha antes do login. */
+   Sempre busca os dados da planilha ao abrir (login, logotipo, usuários).
+   Se a planilha não tiver usuários, cria o usuário temporário. */
 seed();
 cleanupExemplos();
 migrateDados();
