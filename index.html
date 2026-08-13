@@ -376,14 +376,7 @@ const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const VIEW_MODES = [
-  {m:'xg',       label:'Ícones extra grandes', ic:'fa-display'},
-  {m:'g',        label:'Ícones grandes',       ic:'fa-grip'},
-  {m:'m',        label:'Ícones médios',        ic:'fa-table-cells'},
-  {m:'p',        label:'Ícones pequenos',      ic:'fa-border-all'},
-  {m:'lista',    label:'Lista',                ic:'fa-list-ul'},
-  {m:'detalhes', label:'Detalhes',             ic:'fa-list-check'}
-];
+const APP_VERSAO = 3; /* deve coincidir com VERSAO do Apps Script */
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -411,14 +404,7 @@ const EMPRESA_PADRAO = {
 function getEmpresa(){ return Object.assign({}, EMPRESA_PADRAO, DB.get('Empresa')[0] || {}); }
 function setEmpresa(obj){ DB.set('Empresa', [obj]); }
 
-/* ===== PERMISSÕES =====
-   NOVO MODELO:
-   - Permissões GLOBAIS do usuário valem em todas as PASTAS DA EMPRESA
-     (criadas por administradores), inclusive raiz.
-   - Pastas criadas por usuários comuns são PRIVADAS: só o dono, admins e
-     quem receber acesso em "Compartilhar" entram (subpastas herdam).
-   - "Compartilhar" em pasta da empresa serve para RESTRINGIR um usuário
-     específico (a entrada substitui as permissões globais dele nela).    */
+/* ===== PERMISSÕES ===== */
 const PERMS_LIST = [
   {k:'visualizar',   label:'Visualizar',   ic:'fa-eye'},
   {k:'editar',       label:'Editar',       ic:'fa-pen'},
@@ -492,8 +478,6 @@ const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
   set(f, rows){ store.set('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
 };
-function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
-function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 let pullTimer = null;
 function agendarPull(){
   if(!Sync.url()) return;
@@ -541,12 +525,41 @@ const Sync = {
     const localUsers = DB.get('Usuarios').length;
     const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
     if(serverVazio && localUsers){ this.pushAll(); return false; }
-    if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
-    if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
-    FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
+    adotarDados(data);
     return true;
   }
 };
+/* Adota os dados do servidor como fonte da verdade (não apaga mais a planilha) */
+function adotarDados(data){
+  if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
+  if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
+  FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
+}
+/* Sincronização inicial: consulta o Sheets ANTES de qualquer push.
+   - Servidor com dados  -> adota localmente, migra e devolve p/ criar pastas no Drive.
+   - Servidor vazio      -> envia os dados locais.
+   - Versão do Apps Script antiga -> avisa para criar NOVA VERSÃO da implantação. */
+function sincronizarInicial(){
+  if(!Sync.url()) return;
+  Sync.pull().then(data => {
+    if(!data) return;
+    if(data.__v === undefined || Number(data.__v) < APP_VERSAO){
+      toast('Apps Script desatualizado: copie o novo código em "Sobre" e crie uma NOVA VERSÃO da implantação para criar as pastas no Drive.','error');
+    }
+    const temServidor = Array.isArray(data.Usuarios) && data.Usuarios.length > 0;
+    if(temServidor){
+      adotarDados(data);
+      cleanupExemplos(true);
+      migrateDados(true);
+      Sync.pushAll(); /* garante pastas espelhadas no Drive */
+      const u = currentUser();
+      if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); }
+      else if(!$('#app').classList.contains('hidden')) renderApp();
+    } else {
+      Sync.pushAll();
+    }
+  }).catch(() => {});
+}
 
 /* ============ helpers de arquivo ============ */
 function b64ToBytes(b64){ const bin = atob(b64); const b = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i); return b; }
@@ -888,36 +901,42 @@ document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
 
-/* ================= SEED / MIGRAÇÕES ================= */
+/* ================= SEED / LIMPEZA / MIGRAÇÃO (somente local, sem push) ================= */
 function seed(){
-  if (DB.get('Empresa').length === 0) setEmpresa(EMPRESA_PADRAO);
-  if (!store.get('rio_seeded_v6')){
-    if (DB.get('Usuarios').length === 0){
-      DB.set('Usuarios', [{
-        id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123',
-        papel:'master', perms:ALL_PERMS.slice(), criadoEm:Date.now()
-      }]);
-    }
-    store.set('rio_seeded_v6','1');
+  if (store.get('rio_seeded_v8')) return;
+  if (DB.get('Empresa').length === 0) store.set('rio_Empresa', JSON.stringify([EMPRESA_PADRAO]));
+  if (DB.get('Usuarios').length === 0){
+    store.set('rio_Usuarios', JSON.stringify([{
+      id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123',
+      papel:'master', perms:ALL_PERMS.slice(), criadoEm:Date.now()
+    }]));
   }
+  store.set('rio_seeded_v8','1');
 }
-function cleanupExemplos(){
-  if (store.get('rio_cleaned_v6')) return;
+/* Remove antigos dados de exemplo SEM tocar no servidor */
+function cleanupExemplos(force){
+  const FLAG = 'rio_cleaned_v8';
+  if (!force && store.get(FLAG)) return;
+  if (store.get(FLAG) && force) return;
   const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
   const sampleFolders = ['f_pub','f_adm','f_rh','f_edi'];
   const sampleUsers = ['u_ana','u_carlos'];
-  DB.set('Documentos', DB.get('Documentos')
+  const docs = DB.get('Documentos')
     .filter(d => !sampleDocs.includes(d.id))
-    .map(d => sampleFolders.includes(d.pastaId) ? Object.assign({}, d, {pastaId: null}) : d));
-  DB.set('Pastas', DB.get('Pastas')
+    .map(d => sampleFolders.includes(d.pastaId) ? Object.assign({}, d, {pastaId: null}) : d);
+  store.set('rio_Documentos', JSON.stringify(docs));
+  const pastas = DB.get('Pastas')
     .filter(p => !sampleFolders.includes(p.id))
-    .map(p => sampleFolders.includes(p.parentId) ? Object.assign({}, p, {parentId: null}) : p));
-  DB.set('Permissoes', DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId)));
-  DB.set('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
-  store.set('rio_cleaned_v6','1');
+    .map(p => sampleFolders.includes(p.parentId) ? Object.assign({}, p, {parentId: null}) : p);
+  store.set('rio_Pastas', JSON.stringify(pastas));
+  store.set('rio_Permissoes', JSON.stringify(DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId))));
+  store.set('rio_Usuarios', JSON.stringify(DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id))));
+  store.set(FLAG,'1');
 }
-function migrateDados(){
-  if (store.get('rio_migrated_v7')) return;
+function migrateDados(force){
+  const FLAG = 'rio_migrated_v8';
+  if (!force && store.get(FLAG)) return;
+  if (store.get(FLAG) && force) return;
   let chP = false;
   const perms = DB.get('Permissoes').map(p => {
     if(p && Array.isArray(p.perms)) return p;
@@ -932,7 +951,7 @@ function migrateDados(){
     return normUserRow(u);
   });
   if(chU) store.set('rio_Usuarios', JSON.stringify(users));
-  store.set('rio_migrated_v7','1');
+  store.set(FLAG,'1');
 }
 
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
@@ -950,12 +969,6 @@ function ownerIsAdmin(p){
   return !o || ehAdmin(o);
 }
 function permsGlobais(u){ return (u.perms && u.perms.length ? u.perms : PRESETS.visualizador).slice(); }
-/* Permissões efetivas do usuário na pasta:
-   - admin: tudo; dono da pasta: tudo;
-   - pasta da empresa (criada por admin): valem as permissões globais,
-     exceto se houver entrada de compartilhamento restringindo este usuário;
-   - pasta privada de outro usuário: só com entrada de compartilhamento
-     (na própria pasta ou em ancestral), senão sem acesso. */
 function permsEff(userId, pasta){
   const u = getUsuarios().find(x => x.id === userId);
   if(!u || !pasta) return [];
@@ -992,6 +1005,8 @@ function permsDoc(d){
   }
   return permsEff(u.id, pastaPorId(d.pastaId));
 }
+function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
+function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 function trilha(){
   const chain = []; let cur = pastaPorId(state.currentFolderId);
   while(cur){ chain.unshift(cur); cur = pastaPorId(cur.parentId); }
@@ -1012,7 +1027,7 @@ function toast(msg, tipo){
   t.className = 'toast ' + tipo;
   t.innerHTML = '<i class="fa-solid ' + icons[tipo] + '"></i><span>' + esc(msg) + '</span>';
   $('#toasts').appendChild(t);
-  setTimeout(() => { t.classList.add('saindo'); setTimeout(() => t.remove(), 320); }, 3400);
+  setTimeout(() => { t.classList.add('saindo'); setTimeout(() => t.remove(), 320); }, 4200);
 }
 function openModal(html){ $('#modalCard').innerHTML = html; $('#modalOverlay').classList.remove('hidden'); }
 function fecharModal(){
@@ -1049,7 +1064,6 @@ function iniciarApp(){
   $('#app').classList.remove('hidden');
   state.viewMode = 'detalhes';
   renderApp();
-  if(Sync.url()) setTimeout(() => Sync.pushAll(), 1200);
 }
 function renderApp(){
   const u = currentUser();
@@ -1551,17 +1565,19 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
-/* ===== BACKEND APPS SCRIPT ===== */
+/* ===== BACKEND APPS SCRIPT (VERSAO 3) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 3)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - Cria no Drive uma pasta para cada pasta do app\n' +
 '   (SGD_Arquivos > estrutura espelhada).\n' +
 ' - Uploads entram na pasta correta; movimentações\n' +
 '   de arquivo movem o arquivo no Drive.\n' +
-' Implantação: Aplicativo da Web (eu mesmo / qualquer pessoa).\n' +
+' IMPORTANTE: após colar este código, publique uma\n' +
+' NOVA VERSÃO da implantação (Gerenciar implantações).\n' +
 '=====================================================\n\n' +
+'var VERSAO = 3;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
 'function folha_(nome){\n' +
 '  var ss = SpreadsheetApp.getActiveSpreadsheet();\n' +
@@ -1648,6 +1664,7 @@ const SCRIPT_GAS =
 '}\n\n' +
 'function doGet(){\n' +
 '  var out = {};\n' +
+'  out.__v = VERSAO;\n' +
 '  FOLHAS.forEach(function(f){\n' +
 '    out[f] = lerFolha_(f).map(function(r){ return r.obj; });\n' +
 '  });\n' +
@@ -1704,15 +1721,15 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões globais que valem em todas as pastas da empresa</b> (criar pasta, upload, excluir, editar...), <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos entre pastas</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. "Compartilhar" restringe usuários específicos ou libera pastas privadas.</p>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões globais por usuário</b>, <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos</b>, <b>edição de DOCX/XLSX</b> e <b>digitalização pela câmera</b>. O Google Sheets é a fonte da verdade: ao abrir, o app baixa os dados do servidor e só envia os locais se o servidor estiver vazio — atualizar o app não apaga mais a planilha.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada e <b>gravada neste navegador</b> (botão "Salvar URL" ou tecla Enter). Se o campo for limpo, a URL oficial padrão é usada automaticamente.</p>' +
+    '<p class="sobre-texto">A URL oficial já vem pré-configurada. <b>Se as pastas não aparecerem no Drive</b>: 1) copie o código abaixo; 2) no Apps Script, salve e crie uma <b>NOVA VERSÃO da implantação</b> (Gerenciar implantações → Editar → Nova versão); 3) recarregue este app.</p>' +
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
-    '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Baixar do Sheets</button></div>' +
+    '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Sincronizar agora</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive)</h2>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 3</h2>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
@@ -2095,6 +2112,7 @@ document.addEventListener('click', e => {
       Sync.pushAll();
       Sync.pull()
         .then(data => {
+          if(!data.__v || Number(data.__v) < APP_VERSAO) toast('Apps Script desatualizado: crie uma NOVA VERSÃO da implantação.','error');
           if(Sync.applyData(data)){ toast('Dados sincronizados do Sheets!'); aplicarMarca(); if(currentUser()) renderView(); else mostrarLogin(); }
           else toast('Servidor vazio — dados locais enviados para o Sheets/Drive.','info');
         })
@@ -2172,11 +2190,14 @@ $('#loginForm').addEventListener('submit', e => {
 
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
-/* ================= BOOT ================= */
+/* ================= BOOT =================
+   Ordem segura: prepara o local SEM enviar nada ao servidor e,
+   somente depois, consulta o Sheets (fonte da verdade). */
 seed();
-cleanupExemplos();
-migrateDados();
+cleanupExemplos(false);
+migrateDados(false);
 if(currentUser()) iniciarApp(); else mostrarLogin();
+sincronizarInicial();
 </script>
 </body>
 </html>
