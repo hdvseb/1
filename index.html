@@ -320,7 +320,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 </head>
 <body>
 
-<!-- ==================== LOGIN (sem informações de usuários) ==================== -->
+<!-- ==================== LOGIN ==================== -->
 <div id="loginScreen" class="login-screen">
   <div class="login-card">
     <img id="loginLogo" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
@@ -374,7 +374,6 @@ const iniciais = n => n.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase(
 const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
-/* URL oficial de implantação do Apps Script (Sheets + Drive) */
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const VIEW_MODES = [
@@ -385,7 +384,6 @@ const VIEW_MODES = [
   {m:'lista',    label:'Lista',                ic:'fa-list-ul'},
   {m:'detalhes', label:'Detalhes',             ic:'fa-list-check'}
 ];
-/* Armazenamento com fallback em memória (caso o navegador bloqueie localStorage) */
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -430,6 +428,22 @@ const PRESETS = {
   editor:       ['visualizar','editar','excluir','imprimir','upload','download','criar_pasta'],
   completo:     ALL_PERMS.slice()
 };
+/* Conversão do formato ANTIGO de permissão de pasta (nivel) para o atual (perms[]) */
+const LEGACY_NIVEL = {
+  'ver':    ['visualizar','imprimir'],
+  'baixar': ['visualizar','imprimir','download'],
+  'editar': PRESETS.editor
+};
+function normPermRow(p){
+  if(p && Array.isArray(p.perms)) return p;
+  return Object.assign({}, p, {perms: (LEGACY_NIVEL[p && p.nivel] || ['visualizar']).slice()});
+}
+function normUserRow(u){
+  if(u && Array.isArray(u.perms)) return u;
+  const def = (u && (u.papel === 'admin' || u.papel === 'master')) ? ALL_PERMS.slice()
+            : (PRESETS[u && u.papel] || PRESETS.visualizador).slice();
+  return Object.assign({}, u, {perms: def});
+}
 function presetSet(nome){
   if(nome === 'leitor' || nome === 'visualizador') return PRESETS.visualizador;
   if(nome === 'editor') return PRESETS.editor;
@@ -472,6 +486,9 @@ const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
   set(f, rows){ store.set('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
 };
+/* Leituras normalizadas (compatíveis com dados antigos vindos do Sheets) */
+function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
+function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 let pullTimer = null;
 function agendarPull(){
   if(!Sync.url()) return;
@@ -483,7 +500,10 @@ function agendarPull(){
           const d = DB.get('Documentos').find(x => x.id === id);
           if(d && d.driveId) delete pendingArquivos[id];
         });
-        if(state.view === 'dashboard') renderItens();
+        if(!$('#modalOverlay') || $('#modalOverlay').classList.contains('hidden')){
+          if(currentUser()) renderView();
+          else { session = null; store.set('rio_session',''); mostrarLogin(); }
+        }
       }
     }).catch(() => {});
   }, 3500);
@@ -516,6 +536,9 @@ const Sync = {
     const localUsers = DB.get('Usuarios').length;
     const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
     if(serverVazio && localUsers){ this.pushAll(); return false; }
+    /* normaliza formatos antigos antes de gravar localmente */
+    if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
+    if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
     FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
     return true;
   }
@@ -842,11 +865,10 @@ document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
 
-/* ================= SEED (sem dados de exemplo) ================= */
+/* ================= SEED / MIGRAÇÕES ================= */
 function seed(){
   if (DB.get('Empresa').length === 0) setEmpresa(EMPRESA_PADRAO);
   if (!store.get('rio_seeded_v6')){
-    /* Instalação limpa: apenas o administrador inicial, sem pastas/documentos de exemplo */
     if (DB.get('Usuarios').length === 0){
       DB.set('Usuarios', [{
         id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123',
@@ -856,9 +878,6 @@ function seed(){
     store.set('rio_seeded_v6','1');
   }
 }
-/* Remove os antigos dados de exemplo (sem apagar dados reais):
-   documentos/pastas/usuários de demonstração são excluídos e qualquer
-   arquivo real que estivesse dentro das pastas de exemplo é movido para a Raiz. */
 function cleanupExemplos(){
   if (store.get('rio_cleaned_v6')) return;
   const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
@@ -874,6 +893,25 @@ function cleanupExemplos(){
   DB.set('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
   store.set('rio_cleaned_v6','1');
 }
+/* Migra dados locais antigos (nivel -> perms[]; usuarios sem perms) e regravará no Sheets no próximo pushAll */
+function migrateDados(){
+  if (store.get('rio_migrated_v7')) return;
+  let chP = false;
+  const perms = DB.get('Permissoes').map(p => {
+    if(p && Array.isArray(p.perms)) return p;
+    chP = true;
+    return normPermRow(p);
+  });
+  if(chP) store.set('rio_Permissoes', JSON.stringify(perms));
+  let chU = false;
+  const users = DB.get('Usuarios').map(u => {
+    if(u && Array.isArray(u.perms)) return u;
+    chU = true;
+    return normUserRow(u);
+  });
+  if(chU) store.set('rio_Usuarios', JSON.stringify(users));
+  store.set('rio_migrated_v7','1');
+}
 
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
@@ -882,19 +920,20 @@ const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'det
 let currentBlobUrl = null;
 let cfgLogo = null;
 
-function currentUser(){ return session ? DB.get('Usuarios').find(u => u.id === session.userId) : null; }
+function currentUser(){ return session ? getUsuarios().find(u => u.id === session.userId) : null; }
 function ehAdmin(u){ return u && (u.papel === 'master' || u.papel === 'admin'); }
 function pastaPorId(id){ return id ? DB.get('Pastas').find(p => p.id === id) : null; }
 function permsEff(userId, pasta){
-  const u = DB.get('Usuarios').find(x => x.id === userId);
+  const u = getUsuarios().find(x => x.id === userId);
   if(!u || !pasta) return [];
   if(ehAdmin(u)) return ALL_PERMS.slice();
   const pastas = DB.get('Pastas');
-  const usuarios = DB.get('Usuarios');
+  const usuarios = getUsuarios();
+  const permRows = getPermissoes();
   let cur = pasta, grant = null;
   while(cur){
     if(cur.criadaPor === userId){ grant = ALL_PERMS.slice(); break; }
-    const e = DB.get('Permissoes').find(p => p.pastaId === cur.id && p.userId === userId);
+    const e = permRows.find(p => p.pastaId === cur.id && p.userId === userId);
     if(e){ grant = e.perms || []; break; }
     const owner = usuarios.find(x => x.id === cur.criadaPor);
     const ownerAdmin = !owner || ehAdmin(owner);
@@ -902,7 +941,7 @@ function permsEff(userId, pasta){
     cur = cur.parentId ? pastas.find(p => p.id === cur.parentId) : null;
   }
   if(!grant) return [];
-  const global = u.perms || ALL_PERMS.slice();
+  const global = u.perms || PRESETS.visualizador;
   return grant.filter(k => global.includes(k));
 }
 function permsAtuais(){
@@ -977,7 +1016,9 @@ function iniciarApp(){
   if(Sync.url()) setTimeout(() => Sync.pushAll(), 1200);
 }
 function renderApp(){
-  $('#userName').textContent = 'Olá, ' + currentUser().nome;
+  const u = currentUser();
+  if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); toast('Sessão expirada após sincronização. Entre novamente.','info'); return; }
+  $('#userName').textContent = 'Olá, ' + u.nome;
   aplicarMarca();
   renderSidebar(); atualizarBadge(); renderView();
 }
@@ -998,6 +1039,7 @@ function renderSidebar(){
 }
 function renderView(){
   const u = currentUser();
+  if(!u){ mostrarLogin(); return; }
   if(state.view === 'config' && !ehAdmin(u)) state.view = 'dashboard';
   if(state.view === 'sobre'  && !ehAdmin(u)) state.view = 'dashboard';
   if(state.view === 'dashboard') renderDashboard();
@@ -1084,7 +1126,7 @@ function renderItens(){
     docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
   }
   const perms = permsAtuais();
-  const usuarios = DB.get('Usuarios');
+  const usuarios = getUsuarios();
   const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
   const mode = state.viewMode || 'detalhes';
   const grid = ['xg','g','m','p'].includes(mode);
@@ -1205,7 +1247,7 @@ function modalDoc(docId){
 }
 function modalEditarUsuario(userId){
   const u = currentUser();
-  const x = DB.get('Usuarios').find(y => y.id === userId); if(!x) return;
+  const x = getUsuarios().find(y => y.id === userId); if(!x) return;
   if(!(ehAdmin(u) || x.id === u.id)){ toast('Sem permissão para editar este usuário.','error'); return; }
   openModal('<h3><i class="fa-solid fa-user-pen"></i> Editar dados — ' + esc(x.nome) + '</h3>' +
     '<p class="modal-sub">' + (ehAdmin(u) ? 'Como administrador você pode alterar os dados de qualquer usuário.' : 'Você pode alterar apenas os seus próprios dados.') + '</p>' +
@@ -1219,7 +1261,7 @@ function noPrev(ci){ return '<div class="no-prev"><i class="fa-solid ' + ci.ic +
 function modalVer(docId){
   const d = DB.get('Documentos').find(x => x.id === docId); if(!d) return;
   const cat = categoria(d), ci = catInfo(d);
-  const autor = (DB.get('Usuarios').find(x => x.id === d.criadoPor) || {}).nome || '—';
+  const autor = (getUsuarios().find(x => x.id === d.criadoPor) || {}).nome || '—';
   const pasta = pastaPorId(d.pastaId);
   const pd = permsDoc(d);
   const podeBaixar = pd.includes('download');
@@ -1304,14 +1346,14 @@ function atualizarPcount(row){
   if(sp){ sp.textContent = n ? n + ' permissão' + (n>1?'s':'') : 'Sem acesso'; sp.className = 'pcount tag ' + (n ? 'tag-edit' : 'tag-view'); }
 }
 function aplicarPresetRow(row, nome){
-  const set = presetSet(nome);
+  let set = presetSet(nome);
   $$('.ptog', row).forEach(b => b.classList.toggle('on', set.includes(b.dataset.perm)));
   atualizarPcount(row);
 }
 function modalCompartilhar(pastaId){
   const p = pastaPorId(pastaId); if(!p) return;
-  const usuarios = DB.get('Usuarios').filter(x => x.papel !== 'master');
-  const perms = DB.get('Permissoes');
+  const usuarios = getUsuarios().filter(x => x.papel !== 'master');
+  const perms = getPermissoes();
   const rows = usuarios.map(x => {
     const cur = (perms.find(pp => pp.pastaId === pastaId && pp.userId === x.id) || {}).perms || [];
     return '<div class="prow" data-user="' + x.id + '" data-nome="' + esc((x.nome + ' ' + x.email).toLowerCase()) + '">' +
@@ -1327,7 +1369,7 @@ function modalCompartilhar(pastaId){
       ).join('') + '</div></div>';
   }).join('');
   openModal('<h3><i class="fa-solid fa-share-nodes"></i> Permissões da pasta</h3>' +
-    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — clique nos ícones para ligar/desligar cada permissão (subpastas herdam). Usuários sem "download + imprimir" abrem PDFs em visualização protegida.</p>' +
+    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — clique nos ícones para ligar/desligar cada permissão (subpastas herdam). "Visualizar" é obrigatório para a pasta aparecer; sem "download + imprimir" o PDF abre em visualização protegida.</p>' +
     '<div class="perm-topbar">' +
       '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="permBusca" placeholder="Buscar usuário por nome ou e-mail..."></div>' +
       '<div class="perm-bulk">' +
@@ -1346,7 +1388,7 @@ function modalCompartilhar(pastaId){
   });
 }
 function modalPermsUser(userId){
-  const x = DB.get('Usuarios').find(y => y.id === userId); if(!x) return;
+  const x = getUsuarios().find(y => y.id === userId); if(!x) return;
   openModal('<h3><i class="fa-solid fa-user-shield"></i> Permissões globais — ' + esc(x.nome) + '</h3>' +
     '<p class="modal-sub">Definem o <b>teto</b> do que o usuário pode fazer em qualquer pasta (o acesso a cada pasta é concedido em "Compartilhar").</p>' +
     '<div class="preset-row"><button data-action="preset-perms" data-preset="visualizador">Perfil Leitor</button>' +
@@ -1413,7 +1455,7 @@ function renderConfig(){
 function renderUsuarios(){
   const u = currentUser();
   const isAdmin = ehAdmin(u);
-  const usuarios = isAdmin ? DB.get('Usuarios') : [u];
+  const usuarios = isAdmin ? getUsuarios() : [u];
   $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Gerenciar Usuários</h1>' +
   '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-users"></i> ' + (isAdmin ? 'Usuários do sistema' : 'Meus dados') + '</h2>' +
   (isAdmin ? '<button class="btn btn-primary" data-action="novo-usuario"><i class="fa-solid fa-user-plus"></i> Novo Usuário</button>' : '') + '</div>' +
@@ -1570,7 +1612,7 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Integração oficial já configurada com o Apps Script (Sheets + Drive): os arquivos enviados são gravados na pasta <b>SGD_Arquivos</b> do Google Drive.</p>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b> (formato compatível com versões anteriores após sincronização), <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Integração oficial com o Apps Script (Sheets + Drive): arquivos gravados na pasta <b>SGD_Arquivos</b>.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
     '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada e <b>gravada neste navegador</b> (botão "Salvar URL" ou tecla Enter). Se o campo for limpo, a URL oficial padrão é usada automaticamente.</p>' +
@@ -1730,14 +1772,14 @@ document.addEventListener('click', e => {
     }
     case 'editar-usuario': modalEditarUsuario(id); break;
     case 'salvar-dados-usuario': {
-      const x = DB.get('Usuarios').find(y => y.id === id); if(!x) break;
+      const x = getUsuarios().find(y => y.id === id); if(!x) break;
       if(!(ehAdmin(u) || x.id === u.id)){ toast('Sem permissão para editar este usuário.','error'); break; }
       const nome = $('#eNome').value.trim();
       const email = $('#eEmail').value.trim().toLowerCase();
       const senha = $('#eSenha').value;
       if(!nome){ toast('Informe o nome.','error'); break; }
       if(!email.includes('@')){ toast('Informe um e-mail válido.','error'); break; }
-      if(DB.get('Usuarios').some(y => y.id !== x.id && y.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); break; }
+      if(getUsuarios().some(y => y.id !== x.id && y.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); break; }
       if(senha && senha.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); break; }
       DB.set('Usuarios', DB.get('Usuarios').map(y => y.id === x.id ? Object.assign({}, y, {
         nome: nome, email: email, senha: senha ? senha : y.senha
@@ -1803,7 +1845,8 @@ document.addEventListener('click', e => {
     }
     case 'salvar-perms-user': {
       if(!ehAdmin(u)){ toast('Apenas administradores podem editar permissões.','error'); break; }
-      const perms = lerCheckboxes($('#modalCard'));
+      let perms = lerCheckboxes($('#modalCard'));
+      if(perms.length && !perms.includes('visualizar')) perms.unshift('visualizar');
       DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === id ? Object.assign({}, x, {perms:perms}) : x));
       fecharModal(); toast('Permissões globais atualizadas.'); renderUsuarios(); break;
     }
@@ -1877,11 +1920,13 @@ document.addEventListener('click', e => {
       let perms = DB.get('Permissoes');
       $$('#modalCard .prow').forEach(row => {
         const userId = row.dataset.user;
-        const conjunto = $$('.ptog.on', row).map(b => b.dataset.perm);
+        let conjunto = $$('.ptog.on', row).map(b => b.dataset.perm);
+        /* garante coerência: qualquer acesso exige "visualizar" */
+        if(conjunto.length && !conjunto.includes('visualizar')) conjunto.unshift('visualizar');
         perms = perms.filter(pp => !(pp.pastaId === id && pp.userId === userId));
         if(conjunto.length) perms.push({id: uid('p'), pastaId: id, userId: userId, perms: conjunto});
       });
-      DB.set('Permissoes', perms); fecharModal(); toast('Permissões da pasta atualizadas.'); renderDashboard(); break;
+      DB.set('Permissoes', perms); fecharModal(); toast('Permissões da pasta atualizadas e sincronizadas.'); renderDashboard(); break;
     }
     case 'novo-usuario':
       if(ehAdmin(u)) modalNovoUsuario();
@@ -1893,15 +1938,17 @@ document.addEventListener('click', e => {
             senha = $('#mSenhaUser').value, papel = $('#mPapelUser').value;
       if(!nome || !email.includes('@')){ toast('Informe nome e e-mail válidos.','error'); return; }
       if(senha.length < 6){ toast('A senha deve ter ao menos 6 caracteres.','error'); return; }
-      if(DB.get('Usuarios').some(x => x.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); return; }
-      const perms = lerCheckboxes($('#modalCard'));
+      if(getUsuarios().some(x => x.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); return; }
+      let perms = lerCheckboxes($('#modalCard'));
+      if(!perms.length) perms = PRESETS.visualizador.slice();
+      if(!perms.includes('visualizar')) perms.unshift('visualizar');
       const usuarios = DB.get('Usuarios');
       usuarios.push({id: uid('u'), nome:nome, email:email, senha:senha, papel:papel, perms:perms, criadoEm:Date.now()});
       DB.set('Usuarios', usuarios); fecharModal(); toast('Usuário criado.'); renderUsuarios(); break;
     }
     case 'excluir-usuario': {
       if(u.papel !== 'master'){ toast('Apenas o Master Admin pode excluir usuários.','error'); break; }
-      const x = DB.get('Usuarios').find(y => y.id === id);
+      const x = getUsuarios().find(y => y.id === id);
       modalConfirm('Excluir usuário', 'Remover o usuário <b>' + esc(x ? x.nome : '') + '</b> e suas permissões de pasta?', () => {
         DB.set('Usuarios', DB.get('Usuarios').filter(y => y.id !== id));
         DB.set('Permissoes', DB.get('Permissoes').filter(p => p.userId !== id));
@@ -1927,7 +1974,7 @@ document.addEventListener('click', e => {
       Sync.pushAll();
       Sync.pull()
         .then(data => {
-          if(Sync.applyData(data)){ toast('Dados sincronizados do Sheets!'); aplicarMarca(); renderView(); }
+          if(Sync.applyData(data)){ toast('Dados sincronizados do Sheets!'); aplicarMarca(); if(currentUser()) renderView(); else mostrarLogin(); }
           else toast('Servidor vazio — dados locais enviados para o Sheets/Drive.','info');
         })
         .catch(() => toast('Falha ao conectar no Apps Script. Verifique a URL.','error'));
@@ -1993,7 +2040,7 @@ $('#loginForm').addEventListener('submit', e => {
   e.preventDefault();
   const email = $('#loginEmail').value.trim().toLowerCase();
   const senha = $('#loginSenha').value;
-  const usr = DB.get('Usuarios').find(x => x.email.toLowerCase() === email && x.senha === senha);
+  const usr = getUsuarios().find(x => x.email.toLowerCase() === email && x.senha === senha);
   if(!usr){ $('#loginErro').textContent = 'E-mail ou senha inválidos.'; return; }
   session = { userId: usr.id };
   store.set('rio_session', JSON.stringify(session));
@@ -2007,6 +2054,7 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
 /* ================= BOOT ================= */
 seed();
 cleanupExemplos();
+migrateDados();
 if(currentUser()) iniciarApp(); else mostrarLogin();
 </script>
 </body>
