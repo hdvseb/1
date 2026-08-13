@@ -115,29 +115,6 @@ button{font-family:inherit}
 .item-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chev{color:#b6c4dd;font-size:12px}
 .item-row[data-action="open-folder"],.lrow[data-action="open-folder"]{cursor:pointer}
-.itens-grid{display:grid;gap:12px;padding:12px 16px 18px}
-.mode-xg{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
-.mode-g{grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
-.mode-m{grid-template-columns:repeat(auto-fill,minmax(138px,1fr))}
-.mode-p{grid-template-columns:repeat(auto-fill,minmax(106px,1fr));gap:8px}
-.gcard{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 10px 12px;display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;transition:.15s}
-.gcard:hover{box-shadow:0 8px 20px rgba(16,42,90,.12);transform:translateY(-1px)}
-.gcard[data-action="open-folder"]{cursor:pointer}
-.gcard .item-ic{width:64px;height:64px;font-size:27px;flex-basis:64px}
-.mode-g .gcard .item-ic{width:52px;height:52px;font-size:22px;flex-basis:52px}
-.mode-m .gcard .item-ic{width:42px;height:42px;font-size:18px;flex-basis:42px}
-.mode-m .gcard{padding:12px 8px 10px}
-.mode-p .gcard{padding:10px 6px 8px;gap:6px}
-.mode-p .gcard .item-ic{width:30px;height:30px;font-size:14px;flex-basis:30px;border-radius:8px}
-.gname{font-weight:700;color:var(--text);font-size:13.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mode-xg .gname{font-size:15px}
-.mode-p .gname{font-size:11px;font-weight:600}
-.gsmall{color:var(--muted);font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mode-m .gsmall,.mode-p .gsmall{display:none}
-.gcard-actions{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
-.gcard-actions .btn-ic{width:28px;height:28px;flex-basis:28px;font-size:12px}
-.mode-p .gcard-actions .btn-ic{width:24px;height:24px;flex-basis:24px;font-size:11px}
-.mode-xg .gcard-actions .btn-ic{width:32px;height:32px;flex-basis:32px}
 .vazio{padding:44px 20px;text-align:center;color:var(--primary);grid-column:1/-1}
 .vazio i{font-size:30px;opacity:.55;display:block;margin-bottom:10px}
 .tag{font-size:11px;font-weight:700;border-radius:999px;padding:4px 10px;white-space:nowrap}
@@ -364,28 +341,36 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 const $  = (s, r) => (r||document).querySelector(s);
 const $$ = (s, r) => Array.from((r||document).querySelectorAll(s));
 const uid = p => p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-const fmtData = ts => { const d = new Date(ts); return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
+const fmtData = ts => { if(!ts) return ''; const d = new Date(ts); if(isNaN(d)) return ''; return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
 const fmtTam = b => b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(1) + ' KB' : (b/1048576).toFixed(1) + ' MB';
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const iniciais = n => n.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
+const iniciais = n => String(n||'?').split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
 const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 3;
+const APP_VERSAO = 4;
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
-  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ this._m[k] = v; } }
+  set(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ this._m[k] = v; return false; } }
 };
+/* grava com proteção de cota: se estourar, remove base64 grandes e tenta de novo */
+function guardarFolhaSeguro(f, rows){
+  if(store.set('rio_'+f, JSON.stringify(rows))) return true;
+  try{
+    const slim = rows.map(r => (r && typeof r.arquivo === 'string' && r.arquivo.length > 900000) ? Object.assign({}, r, {arquivo:''}) : r);
+    return store.set('rio_'+f, JSON.stringify(slim));
+  }catch(e){ return false; }
+}
 function formatosPermitidos(){
   const f = getEmpresa().formats;
   return (Array.isArray(f) && f.length) ? f : DEFAULT_FORMATS;
 }
 function acceptString(){ return '.' + formatosPermitidos().join(',.'); }
 function formatoVisivel(d, u){
-  if(d.tipo !== 'arquivo') return true;
+  if(!d || d.tipo !== 'arquivo') return true;
   if(ehAdmin(u)) return true;
   return formatosPermitidos().includes((d.ext || '').toLowerCase());
 }
@@ -399,7 +384,7 @@ const EMPRESA_PADRAO = {
   responsavel:'Master Admin', logo: LOGO_PADRAO, formats: DEFAULT_FORMATS.slice()
 };
 function getEmpresa(){ return Object.assign({}, EMPRESA_PADRAO, DB.get('Empresa')[0] || {}); }
-function setEmpresa(obj){ DB.set('Empresa', [obj]); }
+function setEmpresa(obj){ guardarFolhaSeguro('Empresa', [obj]); Sync.push('Empresa', [obj]); }
 
 /* ===== PERMISSÕES ===== */
 const PERMS_LIST = [
@@ -424,14 +409,16 @@ const LEGACY_NIVEL = {
   'editar': PRESETS.editor
 };
 function normPermRow(p){
-  if(p && Array.isArray(p.perms)) return p;
-  return Object.assign({}, p, {perms: (LEGACY_NIVEL[p && p.nivel] || ['visualizar']).slice()});
+  if(p && typeof p === 'object' && Array.isArray(p.perms)) return p;
+  const base = (p && typeof p === 'object') ? p : {};
+  return Object.assign({}, base, {perms: (LEGACY_NIVEL[base.nivel] || ['visualizar']).slice()});
 }
 function normUserRow(u){
-  if(u && Array.isArray(u.perms)) return u;
-  const def = (u && (u.papel === 'admin' || u.papel === 'master')) ? ALL_PERMS.slice()
-            : (PRESETS[u && u.papel] || PRESETS.visualizador).slice();
-  return Object.assign({}, u, {perms: def});
+  if(u && typeof u === 'object' && Array.isArray(u.perms)) return u;
+  const base = (u && typeof u === 'object') ? u : {id: uid('u'), nome:'?', email:'?'};
+  const def = (base.papel === 'admin' || base.papel === 'master') ? ALL_PERMS.slice()
+            : (PRESETS[base.papel] || PRESETS.visualizador).slice();
+  return Object.assign({}, base, {perms: def});
 }
 function presetSet(nome){
   if(nome === 'leitor' || nome === 'visualizador') return PRESETS.visualizador;
@@ -446,7 +433,7 @@ function permsCheckboxes(atual){
 }
 function lerCheckboxes(rootEl){ return $$('input[data-perm]:checked', rootEl).map(i => i.dataset.perm); }
 function icoPerms(perms){
-  return '<span class="mini-perms">' + PERMS_LIST.filter(p => perms.includes(p.k)).map(p =>
+  return '<span class="mini-perms">' + PERMS_LIST.filter(p => (perms||[]).includes(p.k)).map(p =>
     '<i class="fa-solid ' + p.ic + '" title="' + p.label + '"></i>').join('') + '</span>';
 }
 
@@ -463,6 +450,7 @@ const CATS = {
   outro:{exts:[], ic:'fa-file', cls:'ic-doc', rot:'Arquivo'}
 };
 function categoria(d){
+  if(!d) return 'outro';
   if(d.tipo === 'texto') return 'txt';
   for(const k in CATS){ if(k !== 'outro' && CATS[k].exts.includes((d.ext||'').toLowerCase())) return k; }
   return 'outro';
@@ -473,7 +461,7 @@ function catInfo(d){ return CATS[categoria(d)]; }
 const pendingArquivos = {};
 const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
-  set(f, rows){ store.set('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
+  set(f, rows){ guardarFolhaSeguro(f, rows); Sync.push(f, rows); }
 };
 let pullTimer = null;
 function agendarPull(){
@@ -513,13 +501,19 @@ const Sync = {
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
+  /* garante que a pasta principal SGD_Arquivos exista no Drive */
+  ensureDriveRoot(){
+    const url = this.url(); if(!url) return;
+    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({acao:'ensureRoot'})}).catch(()=>{});
+  },
   async pull(){
     const url = this.url(); if(!url) throw new Error('sem url');
     const r = await fetch(url); const data = await r.json();
     return data;
   },
   applyData(data){
-    if(!data) return false;
+    if(!data || typeof data !== 'object') return false;
     const localUsers = DB.get('Usuarios').length;
     const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
     if(serverVazio && localUsers){ this.pushAll(); return false; }
@@ -528,26 +522,39 @@ const Sync = {
   }
 };
 function adotarDados(data){
-  if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
-  if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
-  FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
+  try{
+    if(Array.isArray(data.Permissoes)) guardarFolhaSeguro('Permissoes', data.Permissoes.map(normPermRow));
+    if(Array.isArray(data.Usuarios))   guardarFolhaSeguro('Usuarios',   data.Usuarios.map(normUserRow));
+    ['Pastas','Documentos','Empresa'].forEach(f => {
+      if(Array.isArray(data[f])){
+        let rows = data[f];
+        if(f === 'Documentos'){
+          rows = rows.map(r => (r && typeof r.arquivo === 'string' && r.arquivo.length > 900000) ? Object.assign({}, r, {arquivo:''}) : r);
+        }
+        guardarFolhaSeguro(f, rows);
+      }
+    });
+  }catch(e){}
 }
+/* Sincronização inicial: consulta o Sheets ANTES de qualquer push (fonte da verdade),
+   garante a pasta principal no Drive e espelha as pastas. */
 function sincronizarInicial(){
   if(!Sync.url()) return;
+  Sync.ensureDriveRoot();
   Sync.pull().then(data => {
-    if(!data) return;
+    if(!data || typeof data !== 'object') return;
     const v = Number(data.__v || 0);
     backendAntigo = v < APP_VERSAO;
     if(backendAntigo){
-      toast('Backend Apps Script desatualizado: as subpastas no Drive não serão criadas até publicar a NOVA VERSÃO da implantação.','error');
-      if(currentUser()) modalBackendAntigo();
+      toast('Backend Apps Script desatualizado (v' + (v||'?') + '): publique a NOVA VERSÃO da implantação (versão ' + APP_VERSAO + ') para criar as pastas no Drive.','error');
+      if(currentUser() && !$('#app').classList.contains('hidden')) modalBackendAntigo();
     }
     const temServidor = Array.isArray(data.Usuarios) && data.Usuarios.length > 0;
     if(temServidor){
       adotarDados(data);
-      cleanupExemplos(true);
-      migrateDados(true);
-      if(!backendAntigo) Sync.pushAll();
+      cleanupExemplos();
+      migrateDados();
+      if(!backendAntigo){ Sync.push('Pastas', DB.get('Pastas')); Sync.pushAll(); }
       const u = currentUser();
       if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); }
       else if(!$('#app').classList.contains('hidden')) renderApp();
@@ -564,6 +571,7 @@ function verificarVersao(){
       backendAntigo = false;
       fecharModal();
       toast('Backend atualizado (v' + v + '). Criando pastas no Drive…');
+      Sync.ensureDriveRoot();
       Sync.pushAll();
       return true;
     }
@@ -713,7 +721,7 @@ function imprimirDoc(d){
     else if(cat === 'txt' || cat === 'sheet') texto = dataURLTexto(d.arquivo);
     const w = window.open('', '_blank');
     if(!w){ toast('Permita pop-ups para imprimir.','error'); return; }
-    if(cat === 'word' && window.mammoth){
+    if(cat === 'word' && window.mammoth && d.arquivo){
       window.mammoth.convertToHtml({arrayBuffer: b64ToBytes(d.arquivo.split(',')[1]).buffer}).then(res => {
         w.document.write('<html><head><title>' + esc(d.titulo) + '</title></head><body style="font-family:Arial;padding:40px">' + cabecalhoImpressao() + res.value + '<scr'+'ipt>window.onload=function(){window.print()}<\/scr'+'ipt></body></html>');
         w.document.close();
@@ -810,11 +818,11 @@ function renderSheetEditor(){
     '<button class="stab ' + (i === st.active ? 'active' : '') + '" data-action="s-tab" data-idx="' + i + '">' + esc(s.name) + '</button>'
   ).join('');
   const s = st.sheets[st.active];
-  const cols = s.aoa.reduce((m, r) => Math.max(m, r.length), 1);
+  const cols = s.aoa.reduce((m, r) => Math.max(m, (r||[]).length), 1);
   const head = '<tr><th class="rn"></th>' + Array.from({length: cols}, (_, c) => '<th>' + colLetter(c) + '</th>').join('') + '</tr>';
   const body = s.aoa.map((r, ri) =>
     '<tr><td class="rn">' + (ri + 1) + '</td>' +
-    Array.from({length: cols}, (_, ci) => '<td contenteditable="true">' + esc(String(r[ci] != null ? r[ci] : '')) + '</td>').join('') + '</tr>'
+    Array.from({length: cols}, (_, ci) => '<td contenteditable="true">' + esc(String((r||[])[ci] != null ? r[ci] : '')) + '</td>').join('') + '</tr>'
   ).join('');
   $('#sheetEditor').innerHTML = '<table class="sheet-table edit"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
 }
@@ -826,7 +834,7 @@ function syncActiveFromDOM(){
   );
 }
 function sheetCols(){
-  return sheetState.sheets[sheetState.active].aoa.reduce((m, r) => Math.max(m, r.length), 1);
+  return sheetState.sheets[sheetState.active].aoa.reduce((m, r) => Math.max(m, (r||[]).length), 1);
 }
 
 /* ===== CÂMERA ===== */
@@ -863,8 +871,7 @@ function salvarDocArquivo(base, dataUrl){
     return true;
   }
   if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
-  const idDoc = base.id;
-  pendingArquivos[idDoc] = dataUrl;
+  pendingArquivos[base.id] = dataUrl;
   docs.push(Object.assign(base, {arquivo: '', tamanho: Math.round(dataUrl.length * 0.75)}));
   DB.set('Documentos', docs);
   return true;
@@ -926,6 +933,10 @@ document.addEventListener('dragstart', e => {
 document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
+/* evita tela em branco silenciosa: qualquer erro vira toast + cartão de erro */
+window.addEventListener('error', e => {
+  try{ toast('Erro: ' + (e.message || 'desconhecido'), 'error'); }catch(err){}
+});
 
 /* ================= SEED / LIMPEZA / MIGRAÇÃO ================= */
 function seed(){
@@ -939,7 +950,7 @@ function seed(){
   }
   store.set('rio_seeded_v8','1');
 }
-function cleanupExemplos(force){
+function cleanupExemplos(){
   const FLAG = 'rio_cleaned_v8';
   if (store.get(FLAG)) return;
   const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
@@ -948,16 +959,16 @@ function cleanupExemplos(force){
   const docs = DB.get('Documentos')
     .filter(d => !sampleDocs.includes(d.id))
     .map(d => sampleFolders.includes(d.pastaId) ? Object.assign({}, d, {pastaId: null}) : d);
-  store.set('rio_Documentos', JSON.stringify(docs));
+  guardarFolhaSeguro('Documentos', docs);
   const pastas = DB.get('Pastas')
     .filter(p => !sampleFolders.includes(p.id))
     .map(p => sampleFolders.includes(p.parentId) ? Object.assign({}, p, {parentId: null}) : p);
-  store.set('rio_Pastas', JSON.stringify(pastas));
-  store.set('rio_Permissoes', JSON.stringify(DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId))));
-  store.set('rio_Usuarios', JSON.stringify(DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id))));
+  guardarFolhaSeguro('Pastas', pastas);
+  guardarFolhaSeguro('Permissoes', DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId)));
+  guardarFolhaSeguro('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
   store.set(FLAG,'1');
 }
-function migrateDados(force){
+function migrateDados(){
   const FLAG = 'rio_migrated_v8';
   if (store.get(FLAG)) return;
   let chP = false;
@@ -966,14 +977,14 @@ function migrateDados(force){
     chP = true;
     return normPermRow(p);
   });
-  if(chP) store.set('rio_Permissoes', JSON.stringify(perms));
+  if(chP) guardarFolhaSeguro('Permissoes', perms);
   let chU = false;
   const users = DB.get('Usuarios').map(u => {
     if(u && Array.isArray(u.perms)) return u;
     chU = true;
     return normUserRow(u);
   });
-  if(chU) store.set('rio_Usuarios', JSON.stringify(users));
+  if(chU) guardarFolhaSeguro('Usuarios', users);
   store.set(FLAG,'1');
 }
 
@@ -1112,15 +1123,21 @@ function renderSidebar(){
   ).join('');
 }
 function renderView(){
-  const u = currentUser();
-  if(!u){ mostrarLogin(); return; }
-  if(state.view === 'config' && !ehAdmin(u)) state.view = 'dashboard';
-  if(state.view === 'sobre'  && !ehAdmin(u)) state.view = 'dashboard';
-  if(state.view === 'dashboard') renderDashboard();
-  else if(state.view === 'usuarios') renderUsuarios();
-  else if(state.view === 'perfil') renderPerfil();
-  else if(state.view === 'config') renderConfig();
-  else renderSobre();
+  try{
+    const u = currentUser();
+    if(!u){ mostrarLogin(); return; }
+    if(state.view === 'config' && !ehAdmin(u)) state.view = 'dashboard';
+    if(state.view === 'sobre'  && !ehAdmin(u)) state.view = 'dashboard';
+    if(state.view === 'dashboard') renderDashboard();
+    else if(state.view === 'usuarios') renderUsuarios();
+    else if(state.view === 'perfil') renderPerfil();
+    else if(state.view === 'config') renderConfig();
+    else renderSobre();
+  }catch(err){
+    $('#viewRoot').innerHTML = '<div class="view"><div class="vazio"><i class="fa-solid fa-triangle-exclamation"></i>' +
+      '<p>Erro ao carregar a tela: ' + esc(err && err.message ? err.message : err) + '</p>' +
+      '<button class="btn btn-light" data-action="recarregar" style="margin-top:10px"><i class="fa-solid fa-rotate"></i> Recarregar aplicativo</button></div></div>';
+  }
 }
 function atualizarBadge(){
   const on = !!Sync.url();
@@ -1167,7 +1184,8 @@ function renderDashboard(){
     '</section>' +
   '</div>';
   renderTrilha(); renderItens();
-  $('#searchInput').addEventListener('input', e => { state.search = e.target.value; renderItens(); });
+  const si = $('#searchInput');
+  if(si) si.addEventListener('input', e => { state.search = e.target.value; renderItens(); });
 }
 function renderTrilha(){
   const el = $('#breadcrumb'); if(!el) return;
@@ -1184,99 +1202,103 @@ function btnBaixar(d, permitido){
 }
 function renderItens(){
   const el = $('#itens'); if(!el) return;
-  const u = currentUser();
-  const q = state.search.trim().toLowerCase();
-  let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
-  let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
-  if(!state.currentFolderId && !ehAdmin(u)){
-    folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
-    docs = docs.filter(d => permsDoc(d).includes('visualizar'));
-  } else if(state.currentFolderId){
-    folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
-  }
-  docs = docs.filter(d => formatoVisivel(d, u));
-  if(q){
-    folders = folders.filter(p => p.nome.toLowerCase().includes(q));
-    docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
-  }
-  const perms = permsAtuais();
-  const usuarios = getUsuarios();
-  const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
-  const mode = state.viewMode || 'detalhes';
-  const grid = ['xg','g','m','p'].includes(mode);
+  try{
+    const u = currentUser();
+    const q = state.search.trim().toLowerCase();
+    let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
+    let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
+    if(!state.currentFolderId && !ehAdmin(u)){
+      folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
+      docs = docs.filter(d => permsDoc(d).includes('visualizar'));
+    } else if(state.currentFolderId){
+      folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
+    }
+    docs = docs.filter(d => formatoVisivel(d, u));
+    if(q){
+      folders = folders.filter(p => p.nome.toLowerCase().includes(q));
+      docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
+    }
+    const perms = permsAtuais();
+    const usuarios = getUsuarios();
+    const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
+    const mode = state.viewMode || 'detalhes';
+    const grid = ['xg','g','m','p'].includes(mode);
 
-  const acoesPasta = (p, dono) =>
-    (dono ? '<button class="btn-ic" title="Permissões da pasta" data-action="compartilhar" data-id="' + p.id + '"><i class="fa-solid fa-share-nodes"></i></button>' : '') +
-    ((dono || perms.includes('excluir_pasta')) ? '<button class="btn-ic danger" title="Excluir pasta" data-action="excluir-pasta" data-id="' + p.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
-  const acoesDoc = (d, pd) =>
-    '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
-    btnBaixar(d, pd.includes('download')) +
-    (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
-    (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
-    (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+    const acoesPasta = (p, dono) =>
+      (dono ? '<button class="btn-ic" title="Permissões da pasta" data-action="compartilhar" data-id="' + p.id + '"><i class="fa-solid fa-share-nodes"></i></button>' : '') +
+      ((dono || perms.includes('excluir_pasta')) ? '<button class="btn-ic danger" title="Excluir pasta" data-action="excluir-pasta" data-id="' + p.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+    const acoesDoc = (d, pd) =>
+      '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
+      btnBaixar(d, pd.includes('download')) +
+      (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
+      (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
+      (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
 
-  let html = '';
-  if(grid){
-    el.className = 'itens-grid mode-' + mode;
-    html = folders.map(p => {
-      const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-      return '<div class="gcard" data-action="open-folder" data-id="' + p.id + '">' +
-        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
-        '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + '</span>' +
-        '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</span>' +
-        '<div class="gcard-actions">' + acoesPasta(p, dono) + '</div></div>';
-    }).join('') +
-    docs.map(d => {
-      const ci = catInfo(d); const pd = permsDoc(d);
-      return '<div class="gcard">' +
-        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-        '<span class="gname" title="' + esc(d.titulo) + '">' + esc(d.titulo) + '</span>' +
-        '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') + '</span>' +
-        '<div class="gcard-actions">' + acoesDoc(d, pd) + '</div></div>';
-    }).join('');
-  } else if(mode === 'lista'){
-    el.className = 'itens';
-    html = folders.map(p => {
-      const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-      return '<div class="lrow" data-action="open-folder" data-id="' + p.id + '">' +
-        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
-        '<span class="gname">' + esc(p.nome) + '</span>' +
-        '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
-    }).join('') +
-    docs.map(d => {
-      const ci = catInfo(d); const pd = permsDoc(d);
-      return '<div class="lrow">' +
-        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-        '<span class="gname">' + esc(d.titulo) + '</span>' +
-        '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
-    }).join('');
-  } else {
-    el.className = 'itens';
-    html = folders.map(p => {
-      const pv = permsEff(u.id, p);
-      const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-      return '<div class="item-row" data-action="open-folder" data-id="' + p.id + '">' +
-        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
-        '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
-        (dono ? '<span class="tag tag-admin">Controle total</span>' : '<span class="tag tag-arq">' + icoPerms(pv) + '</span>') +
-        '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
-    }).join('') +
-    docs.map(d => {
-      const ci = catInfo(d);
-      const pd = permsDoc(d);
-      const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
-      return '<div class="item-row">' +
-        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-        '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '') + '</small></div>' +
-        '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
-        '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
-    }).join('');
+    let html = '';
+    if(grid){
+      el.className = 'itens-grid mode-' + mode;
+      html = folders.map(p => {
+        const dono = p.criadaPor === u.id || ehAdmin(u);
+        const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
+        return '<div class="gcard" data-action="open-folder" data-id="' + p.id + '">' +
+          '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+          '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + '</span>' +
+          '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</span>' +
+          '<div class="gcard-actions">' + acoesPasta(p, dono) + '</div></div>';
+      }).join('') +
+      docs.map(d => {
+        const ci = catInfo(d); const pd = permsDoc(d);
+        return '<div class="gcard">' +
+          '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+          '<span class="gname" title="' + esc(d.titulo) + '">' + esc(d.titulo) + '</span>' +
+          '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') + '</span>' +
+          '<div class="gcard-actions">' + acoesDoc(d, pd) + '</div></div>';
+      }).join('');
+    } else if(mode === 'lista'){
+      el.className = 'itens';
+      html = folders.map(p => {
+        const dono = p.criadaPor === u.id || ehAdmin(u);
+        const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
+        return '<div class="lrow" data-action="open-folder" data-id="' + p.id + '">' +
+          '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+          '<span class="gname">' + esc(p.nome) + '</span>' +
+          '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
+      }).join('') +
+      docs.map(d => {
+        const ci = catInfo(d); const pd = permsDoc(d);
+        return '<div class="lrow">' +
+          '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+          '<span class="gname">' + esc(d.titulo) + '</span>' +
+          '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
+      }).join('');
+    } else {
+      el.className = 'itens';
+      html = folders.map(p => {
+        const pv = permsEff(u.id, p);
+        const dono = p.criadaPor === u.id || ehAdmin(u);
+        const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
+        return '<div class="item-row" data-action="open-folder" data-id="' + p.id + '">' +
+          '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+          '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
+          (dono ? '<span class="tag tag-admin">Controle total</span>' : '<span class="tag tag-arq">' + icoPerms(pv) + '</span>') +
+          '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
+      }).join('') +
+      docs.map(d => {
+        const ci = catInfo(d);
+        const pd = permsDoc(d);
+        const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
+        return '<div class="item-row">' +
+          '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+          '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '') + '</small></div>' +
+          '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
+          '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
+      }).join('');
+    }
+    if(!html) html = '<div class="vazio"><i class="fa-solid fa-folder-open"></i><p>Sem arquivos nesta pasta.</p></div>';
+    el.innerHTML = html;
+  }catch(err){
+    el.innerHTML = '<div class="vazio"><i class="fa-solid fa-triangle-exclamation"></i><p>Erro ao carregar os arquivos: ' + esc(err && err.message ? err.message : err) + '</p></div>';
   }
-  if(!html) html = '<div class="vazio"><i class="fa-solid fa-folder-open"></i><p>Sem arquivos nesta pasta.</p></div>';
-  el.innerHTML = html;
 }
 
 /* ================= UPLOAD ================= */
@@ -1315,10 +1337,12 @@ function modalDoc(docId){
   openModal('<h3><i class="fa-solid ' + (isFile ? catInfo(d).ic : 'fa-file-pen') + '"></i> ' + (d ? (isFile ? 'Renomear arquivo' : 'Editar documento') : 'Novo documento') + '</h3>' +
     '<label class="campo">Título<input id="mTitulo" value="' + (d ? esc(d.titulo) : '') + '"></label>' +
     (isFile
-      ? '<p class="modal-sub"><i class="fa-solid fa-circle-info"></i> Use o botão "caneta" na lista para abrir o editor de DOCX/XLSX. Aqui você apenas renomeia o arquivo.</p>'
-      : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12"></textarea></label>') +
-    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
-    '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+      ? '<p class="modal-sub"><i class="fa-solid fa-circle-info"></i> Use o botão "caneta" na lista para abrir o editor de DOCX/XLSX. Aqui você apenas renomeia o arquivo.</p>' +
+        '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+        '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>'
+      : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12"></textarea></label>' +
+        '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+        '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
   setTimeout(() => { const i = $('#mTitulo'); if(i) i.focus(); }, 60);
 }
 function modalEditarUsuario(userId){
@@ -1589,20 +1613,20 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
-/* ===== BACKEND APPS SCRIPT (VERSAO 3) ===== */
+/* ===== BACKEND APPS SCRIPT (VERSAO 4) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 3)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 4)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
-' - Cria no Drive uma pasta para cada pasta do app\n' +
-'   (SGD_Arquivos > estrutura espelhada).\n' +
+' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
+'   subpasta para cada pasta do app (espelhada).\n' +
 ' - Uploads entram na pasta correta; movimentações\n' +
 '   de arquivo movem o arquivo no Drive.\n' +
 ' IMPORTANTE: após colar este código, publique uma\n' +
 ' NOVA VERSÃO da implantação (Gerenciar implantações),\n' +
 ' senão a URL /exec continua executando o código velho.\n' +
 '=====================================================\n\n' +
-'var VERSAO = 3;\n' +
+'var VERSAO = 4;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
 'function folha_(nome){\n' +
 '  var ss = SpreadsheetApp.getActiveSpreadsheet();\n' +
@@ -1701,6 +1725,11 @@ const SCRIPT_GAS =
 '  lock.waitLock(30000);\n' +
 '  try {\n' +
 '    var body = JSON.parse(e.postData.contents);\n' +
+'    if (body.acao === "ensureRoot"){\n' +
+'      pastaDriveRaiz_();\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true, v:VERSAO}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
 '    var rows = body.rows || [];\n' +
 '    var cache = {};\n' +
 '    var sh = folha_(body.folha);\n' +
@@ -1746,13 +1775,13 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto"><b>Se as subpastas não aparecem no Drive</b>, o Apps Script publicado está desatualizado. Passos: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>. Só colar o código NÃO atualiza a URL /exec!</p>' +
+    '<p class="sobre-texto">O app verifica e cria a pasta principal <b>SGD_Arquivos</b> e as subpastas espelhadas a cada conexão. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>. Só colar o código NÃO atualiza a URL /exec!</p>' +
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 3</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 4</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -1772,6 +1801,7 @@ document.addEventListener('click', e => {
   const u = currentUser();
 
   if(a === 'preencher'){ $('#loginEmail').value = el.dataset.email; $('#loginSenha').value = el.dataset.senha; return; }
+  if(a === 'recarregar'){ location.reload(); return; }
   if(!u) return;
 
   switch(a){
@@ -1892,7 +1922,7 @@ document.addEventListener('click', e => {
     case 's-delcol':
       syncActiveFromDOM(); {
         const s = sheetState.sheets[sheetState.active];
-        const cols = s.aoa.reduce((m, r) => Math.max(m, r.length), 1);
+        const cols = s.aoa.reduce((m, r) => Math.max(m, (r||[]).length), 1);
         if(cols > 1) s.aoa.forEach(r => r.pop());
       }
       renderSheetEditor();
@@ -2206,8 +2236,8 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
 
 /* ================= BOOT ================= */
 seed();
-cleanupExemplos(false);
-migrateDados(false);
+cleanupExemplos();
+migrateDados();
 if(currentUser()) iniciarApp(); else { mostrarLogin(); sincronizarInicial(); }
 if(currentUser()) sincronizarInicial();
 </script>
