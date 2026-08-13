@@ -385,6 +385,8 @@ const iniciais = n => n.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase(
 const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
+/* URL oficial de implantação do Apps Script (Sheets + Drive) */
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const VIEW_MODES = [
   {m:'xg',       label:'Ícones extra grandes', ic:'fa-display'},
@@ -480,18 +482,20 @@ function agendarPull(){
   if(!Sync.url()) return;
   clearTimeout(pullTimer);
   pullTimer = setTimeout(() => {
-    Sync.pull().then(() => {
-      Object.keys(pendingArquivos).forEach(id => {
-        const d = DB.get('Documentos').find(x => x.id === id);
-        if(d && d.driveId) delete pendingArquivos[id];
-      });
-      if(state.view === 'dashboard') renderItens();
+    Sync.pull().then(data => {
+      if(Sync.applyData(data)){
+        Object.keys(pendingArquivos).forEach(id => {
+          const d = DB.get('Documentos').find(x => x.id === id);
+          if(d && d.driveId) delete pendingArquivos[id];
+        });
+        if(state.view === 'dashboard') renderItens();
+      }
     }).catch(() => {});
   }, 3500);
 }
 const Sync = {
-  url(){ return localStorage.getItem('rio_gas_url') || ''; },
-  setUrl(u){ if(u) localStorage.setItem('rio_gas_url', u); else localStorage.removeItem('rio_gas_url'); atualizarBadge(); },
+  url(){ const v = localStorage.getItem('rio_gas_url'); return (v !== null) ? v : DEFAULT_GAS_URL; },
+  setUrl(u){ localStorage.setItem('rio_gas_url', u || ''); atualizarBadge(); },
   push(f, rows){
     const url = this.url(); if(!url) return;
     let out = rows;
@@ -506,10 +510,21 @@ const Sync = {
       body: JSON.stringify({folha:f, rows:out})}).catch(()=>{});
     if(f === 'Documentos') agendarPull();
   },
+  pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
   async pull(){
     const url = this.url(); if(!url) throw new Error('sem url');
     const r = await fetch(url); const data = await r.json();
+    return data;
+  },
+  /* Aplica dados do servidor com proteção: se o servidor estiver vazio e houver
+     dados locais, envia os locais primeiro (evita apagar o cadastro). */
+  applyData(data){
+    if(!data) return false;
+    const localUsers = DB.get('Usuarios').length;
+    const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
+    if(serverVazio && localUsers){ this.pushAll(); return false; }
     FOLHAS.forEach(f => { if(Array.isArray(data[f])) localStorage.setItem('rio_'+f, JSON.stringify(data[f])); });
+    return true;
   }
 };
 
@@ -540,7 +555,7 @@ function salvarArquivoBin(d, dataUrl, titulo){
     DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now()}) : x));
     return true;
   }
-  if(!Sync.url()){ toast('Arquivo grande demais para o modo demonstração. Configure a integração Google.','error'); return false; }
+  if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
   pendingArquivos[d.id] = dataUrl;
   DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: '', tamanho: tamanho, atualizadoEm: Date.now()}) : x));
   return true;
@@ -621,7 +636,7 @@ function baixarArquivo(d){
     return;
   }
   if(d.driveId){ window.open('https://drive.google.com/uc?export=download&id=' + d.driveId, '_blank'); return; }
-  toast('Arquivo não disponível localmente. Configure a integração Google.','error');
+  toast('Arquivo não disponível localmente. Aguarde a sincronização com o Drive.','error');
 }
 function cabecalhoImpressao(){
   const e = getEmpresa();
@@ -695,7 +710,7 @@ function abrirEditorWord(d){
   }).catch(() => toast('Não foi possível abrir o DOCX para edição.','error'));
 }
 
-/* ===== EDITOR DE PLANILHA (próprio, com abas) ===== */
+/* ===== EDITOR DE PLANILHA ===== */
 let sheetState = null;
 function abrirEditorSheet(d){
   toast('Abrindo editor de planilha…','info');
@@ -762,7 +777,7 @@ function modalCamera(){
   const pasta = pastaPorId(state.currentFolderId);
   openModal('<h3><i class="fa-solid fa-camera"></i> Digitalizar com a câmera</h3>' +
     '<p class="modal-sub">Capture <b>uma ou várias páginas</b> pelo celular (ou adicione imagens da galeria) e salve como <b>PDF único</b> ou como imagens na pasta atual' +
-    (pasta ? ' (<b>' + esc(pasta.nome) + '</b>)' : ' (Raiz)') + '. As imagens são otimizadas automaticamente.</p>' +
+    (pasta ? ' (<b>' + esc(pasta.nome) + '</b>)' : ' (Raiz)') + '. As imagens são otimizadas e enviadas ao Drive.</p>' +
     '<div class="w-toolbar" style="margin-top:0">' +
       '<button class="btn btn-primary" data-action="cam-add" style="padding:9px 14px;font-size:13px"><i class="fa-solid fa-camera"></i> Capturar página</button>' +
       '<button class="btn btn-light" data-action="cam-gallery" style="padding:9px 14px;font-size:13px"><i class="fa-solid fa-images"></i> Galeria (várias)</button>' +
@@ -788,7 +803,7 @@ function salvarDocArquivo(base, dataUrl){
     DB.set('Documentos', docs);
     return true;
   }
-  if(!Sync.url()){ toast('Arquivo grande demais para o modo demonstração (~1,2 MB). Configure a integração Google.','error'); return false; }
+  if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
   const idDoc = base.id;
   pendingArquivos[idDoc] = dataUrl;
   docs.push(Object.assign(base, {arquivo: '', tamanho: Math.round(dataUrl.length * 0.75)}));
@@ -920,7 +935,6 @@ function seed(){
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
 try{ session = JSON.parse(localStorage.getItem('rio_session') || 'null'); }catch(e){ session = null; }
-/* Visualização padrão do Dashboard: DETALHES (pode ser alterada na sessão via menu "Visualizar") */
 const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
 let currentBlobUrl = null;
 let cfgLogo = null;
@@ -1017,6 +1031,8 @@ function iniciarApp(){
   $('#app').classList.remove('hidden');
   state.viewMode = 'detalhes';
   renderApp();
+  /* primeira sincronização: envia os dados locais para o servidor (protege contra servidor vazio) */
+  if(Sync.url()) setTimeout(() => Sync.pushAll(), 1200);
 }
 function renderApp(){
   $('#userName').textContent = 'Olá, ' + currentUser().nome;
@@ -1522,7 +1538,7 @@ const SCRIPT_GAS =
 '    - Executar como: eu mesmo\n' +
 '    - Quem tem acesso: qualquer pessoa\n' +
 ' 4) Autorize Drive + Planilhas ao implantar\n' +
-' 5) Copie a URL /exec e cole em "Sobre > Integração"\n' +
+' 5) A URL /exec já vem configurada no aplicativo\n' +
 '=====================================================\n\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
 'function folha_(nome){\n' +
@@ -1605,10 +1621,10 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b> (alternável na sessão), <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera do celular</b>. Os formatos liberados nas Configurações controlam o que cada usuário vê e envia.</p>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Integração oficial já configurada com o Apps Script (Sheets + Drive): os arquivos enviados são gravados na pasta <b>SGD_Arquivos</b> do Google Drive.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">Sem URL configurada o app opera em <b>modo demonstração</b> (arquivos de até ~1,2 MB no navegador). Com a URL do Apps Script configurada, arquivos de até <b>25 MB</b> são enviados ao Google Drive e os links ficam na planilha.</p>' +
+    '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada. Se necessário, você pode substituí-la ou limpar o campo abaixo (o app volta ao modo local).</p>' +
     '<div class="integ-row"><input id="urlGas" placeholder="https://script.google.com/macros/s/XXXX/exec" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Baixar do Sheets</button></div>' +
@@ -1644,7 +1660,7 @@ document.addEventListener('click', e => {
       break;
     }
     case 'set-view':
-      state.viewMode = el.dataset.mode; /* padrão da sessão: detalhes; alterável pelo menu Visualizar */
+      state.viewMode = el.dataset.mode;
       renderDashboard();
       break;
     case 'open-folder':
@@ -1954,12 +1970,16 @@ document.addEventListener('click', e => {
       navigator.clipboard.writeText(SCRIPT_GAS).then(() => toast('Código Apps Script copiado!','info')); break;
     case 'salvar-url':
       Sync.setUrl(($('#urlGas').value || '').trim());
-      toast(Sync.url() ? 'URL salva — sincronização Sheets/Drive ativa.' : 'URL removida — modo demonstração.','info');
+      toast(Sync.url() ? 'URL salva — sincronização Sheets/Drive ativa.' : 'URL removida — modo local.','info');
       atualizarBadge(); break;
     case 'testar-sync':
-      toast('Baixando dados do Google Sheets...','info');
+      toast('Sincronizando com o Google Sheets...','info');
+      Sync.pushAll();
       Sync.pull()
-        .then(() => { toast('Dados sincronizados do Sheets!'); aplicarMarca(); renderView(); })
+        .then(data => {
+          if(Sync.applyData(data)){ toast('Dados sincronizados do Sheets!'); aplicarMarca(); renderView(); }
+          else toast('Servidor vazio — dados locais enviados para o Sheets/Drive.','info');
+        })
         .catch(() => toast('Falha ao conectar no Apps Script. Verifique a URL.','error'));
       break;
   }
