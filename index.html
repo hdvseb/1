@@ -340,6 +340,12 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
     <button id="btnBuscar" class="btn btn-light btn-block hidden" style="margin-top:10px" data-action="buscar-dados"><i class="fa-solid fa-rotate"></i> Buscar dados da planilha</button>
+    <div id="loginUrlBox" class="hidden" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <label class="campo">URL de integração (Apps Script)
+        <input id="loginUrlGas" placeholder="https://script.google.com/macros/s/XXXX/exec">
+      </label>
+      <button class="btn btn-light btn-block" type="button" data-action="salvar-url-login" style="margin-top:8px"><i class="fa-solid fa-floppy-disk"></i> Salvar e conectar</button>
+    </div>
   </div>
 </div>
 
@@ -579,12 +585,15 @@ function adotarDados(data){
 function buscarDadosLogin(){
   const st = $('#loginStatus');
   const btn = $('#btnBuscar');
+  const urlBox = $('#loginUrlBox');
   const setStatus = (html, cls) => { if(st){ st.innerHTML = html; st.className = 'login-status' + (cls ? ' ' + cls : ''); } };
   if(!Sync.url()){
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Nenhuma planilha configurada. Configure a URL de integração em "Sobre" para poder entrar.', 'erro');
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Nenhuma planilha configurada. Cole a URL de integração abaixo para conectar.', 'erro');
+    if(urlBox) urlBox.classList.remove('hidden');
     mostrarLogin();
     return;
   }
+  if(urlBox) urlBox.classList.add('hidden');
   setStatus('<i class="fa-solid fa-spinner fa-spin"></i> Conectando à planilha…');
   if(btn) btn.classList.add('hidden');
   Sync.ensureDriveRoot();
@@ -605,10 +614,18 @@ function buscarDadosLogin(){
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   }).catch(() => {
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique a URL em "Sobre" e sua conexão com a internet.', 'erro');
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique a URL abaixo e sua conexão com a internet.', 'erro');
+    if(urlBox) urlBox.classList.remove('hidden');
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   });
+}
+function salvarUrlLogin(){
+  const inp = $('#loginUrlGas'); if(!inp) return;
+  const v = inp.value.trim();
+  if(!v){ toast('Cole a URL do Apps Script antes de salvar.','error'); return; }
+  Sync.setUrl(v);
+  buscarDadosLogin();
 }
 /* Sincronização periódica com o app logado. */
 function sincronizarInicial(){
@@ -1887,6 +1904,7 @@ document.addEventListener('click', e => {
 
   if(a === 'recarregar'){ location.reload(); return; }
   if(a === 'buscar-dados'){ buscarDadosLogin(); return; }
+  if(a === 'salvar-url-login'){ salvarUrlLogin(); return; }
 
   const u = currentUser();
   if(!u) return;
