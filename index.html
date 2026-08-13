@@ -41,10 +41,8 @@ button{font-family:inherit}
 /* ===== login ===== */
 .login-screen{min-height:100vh;display:grid;place-items:center;background:linear-gradient(160deg,#0b2f7d 0%,#1552c2 55%,#2f7ae0 100%);padding:24px}
 .login-card{background:#fff;border-radius:16px;padding:36px 34px;width:min(430px,94vw);box-shadow:0 24px 60px rgba(0,20,60,.35);animation:fadeUp .45s ease}
-.login-card img{width:210px;display:block;margin:0 auto 10px;object-fit:contain;max-height:90px}
-.login-card h1{font-size:20px;color:var(--heading);text-align:center;margin-bottom:4px}
-.login-card .nome-empresa{color:var(--primary);font-size:13px;font-weight:700;text-align:center;margin-bottom:2px}
-.login-card .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:22px;display:flex;align-items:center;justify-content:center;gap:8px}
+.login-card img{width:210px;display:block;margin:0 auto 14px;object-fit:contain;max-height:90px}
+.login-card h1{font-size:20px;color:var(--heading);text-align:center;margin-bottom:22px}
 .campo{display:block;margin-bottom:14px;font-size:13px;font-weight:600;color:var(--heading)}
 .campo input,.campo textarea,.campo select{display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid var(--border);border-radius:8px;font:inherit;font-weight:400;color:var(--text);background:#fbfcff;transition:.2s}
 .campo input:disabled{background:#eef1f6;color:#7a8aa8}
@@ -325,9 +323,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 <div id="loginScreen" class="login-screen">
   <div class="login-card">
     <img id="loginLogo" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
-    <div class="nome-empresa" id="loginEmpresa"></div>
     <h1>Gestão de Documentos</h1>
-    <p class="sub"><i class="fa-brands fa-google-drive"></i> Drive + Sheets • Acesso restrito a usuários autorizados</p>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
         <input id="loginEmail" type="email" required>
@@ -377,7 +373,7 @@ const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 3; /* precisa coincidir com VERSAO do Apps Script */
+const APP_VERSAO = 3;
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -536,7 +532,6 @@ function adotarDados(data){
   if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
   FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
 }
-/* Consulta o Sheets ANTES de qualquer push (fonte da verdade) */
 function sincronizarInicial(){
   if(!Sync.url()) return;
   Sync.pull().then(data => {
@@ -932,7 +927,7 @@ document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
 
-/* ================= SEED / LIMPEZA / MIGRAÇÃO (somente local) ================= */
+/* ================= SEED / LIMPEZA / MIGRAÇÃO ================= */
 function seed(){
   if (store.get('rio_seeded_v8')) return;
   if (DB.get('Empresa').length === 0) store.set('rio_Empresa', JSON.stringify([EMPRESA_PADRAO]));
@@ -1077,7 +1072,7 @@ $('#modalOverlay').addEventListener('click', e => { if(e.target === $('#modalOve
 function aplicarMarca(){
   const e = getEmpresa();
   $('#logoRio').src = e.logo; $('#logoRio').title = e.nome;
-  $('#loginLogo').src = e.logo; $('#loginEmpresa').textContent = e.nome;
+  const ll = $('#loginLogo'); if(ll) ll.src = e.logo;
   document.title = e.fantasia + ' — Gestão de Documentos';
 }
 function mostrarLogin(){
