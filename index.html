@@ -1,0 +1,2042 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prefeitura do Rio — Gestão de Documentos</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-400-normal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-600-normal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/css/open-sans@latest/latin-700-normal.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
+<style>
+:root{
+  --primary:#1552c2; --primary-dark:#0e3f9e; --heading:#173f8f;
+  --bg:#eef2f7; --sidebar-bg:#f5f8fc; --border:#d8e0ec;
+  --text:#22314f; --muted:#6b7a99;
+  --danger:#d64545; --success:#2f9e6e; --warn:#e8a13c;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Open Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+.hidden{display:none!important}
+button{font-family:inherit}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border:none;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;transition:.2s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-light{background:#fff;color:var(--primary);border:1px solid var(--border)}
+.btn-light:hover{background:#f2f7ff;border-color:var(--primary)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#b93636}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.btn-block{width:100%;justify-content:center}
+.btn-ic{width:34px;height:34px;border:1px solid var(--border);background:#fff;border-radius:8px;color:var(--primary);cursor:pointer;transition:.2s;display:inline-flex;align-items:center;justify-content:center;flex:0 0 34px}
+.btn-ic:hover{background:#eaf2ff;border-color:var(--primary)}
+.btn-ic.danger{color:var(--danger)}
+.btn-ic.danger:hover{background:#fdeeee;border-color:var(--danger)}
+.btn-ic.locked{color:#9aa7c0;background:#f2f5fa;cursor:not-allowed}
+/* ===== login ===== */
+.login-screen{min-height:100vh;display:grid;place-items:center;background:linear-gradient(160deg,#0b2f7d 0%,#1552c2 55%,#2f7ae0 100%);padding:24px}
+.login-card{background:#fff;border-radius:16px;padding:36px 34px;width:min(430px,94vw);box-shadow:0 24px 60px rgba(0,20,60,.35);animation:fadeUp .45s ease}
+.login-card img{width:210px;display:block;margin:0 auto 10px;object-fit:contain;max-height:90px}
+.login-card h1{font-size:20px;color:var(--heading);text-align:center;margin-bottom:4px}
+.login-card .nome-empresa{color:var(--primary);font-size:13px;font-weight:700;text-align:center;margin-bottom:2px}
+.login-card .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:22px;display:flex;align-items:center;justify-content:center;gap:8px}
+.campo{display:block;margin-bottom:14px;font-size:13px;font-weight:600;color:var(--heading)}
+.campo input,.campo textarea,.campo select{display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid var(--border);border-radius:8px;font:inherit;font-weight:400;color:var(--text);background:#fbfcff;transition:.2s}
+.campo input:disabled{background:#eef1f6;color:#7a8aa8}
+.campo input:focus,.campo textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.15)}
+.erro{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:6px}
+.demo-box{margin-top:20px;background:#f2f7ff;border:1px dashed #b9cdec;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#33518b}
+.demo-box strong{display:block;margin-bottom:8px;color:var(--heading)}
+.demo-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;flex-wrap:wrap}
+.demo-row button{border:none;background:#e2edff;color:var(--primary);font-size:11.5px;font-weight:700;border-radius:6px;padding:5px 9px;cursor:pointer}
+.demo-row button:hover{background:var(--primary);color:#fff}
+/* ===== shell ===== */
+.topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
+.topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:14px}
+.user-hello{color:var(--heading);font-weight:700}
+.menu-toggle{display:none;border:none;background:none;font-size:20px;color:var(--primary);cursor:pointer}
+.sync{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;border-radius:999px;padding:5px 11px}
+.sync i{font-size:7px}
+.sync.on{background:#e5f6ee;color:var(--success)}
+.sync.off{background:#fdf3e2;color:var(--warn)}
+.shell{display:flex;min-height:calc(100vh - 66px)}
+.sidebar{width:262px;flex:0 0 262px;background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:22px 14px}
+.nav-item{display:flex;align-items:center;gap:13px;width:100%;padding:13px 15px;border:none;background:none;border-radius:9px;color:var(--primary);font-weight:600;font-size:14.5px;cursor:pointer;transition:.18s;text-align:left;margin-bottom:6px}
+.nav-item i{width:20px;text-align:center}
+.nav-item:hover{background:#e6effc}
+.nav-item.active{background:#dcebff;box-shadow:inset 3px 0 0 var(--primary)}
+.main{flex:1;padding:28px 34px;overflow-y:auto}
+.page-title{font-size:26px;color:var(--heading);font-weight:700;padding-bottom:14px;border-bottom:1px solid #b9c8e4;margin-bottom:22px}
+.view{animation:fadeUp .35s ease}
+/* ===== cards / toolbar ===== */
+.card{background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 1px 3px rgba(16,42,90,.07);overflow:visible}
+.card.mb{margin-bottom:20px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px 0;flex-wrap:wrap}
+.card-head h2{font-size:16.5px;color:var(--heading);display:flex;align-items:center;gap:10px}
+.card-head h2 i{color:var(--primary)}
+.toolbar{display:flex;gap:12px;align-items:center;padding:16px 22px;flex-wrap:wrap}
+.toolbar-actions{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.search-box{flex:1;min-width:220px;display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:0 14px;height:44px;transition:.2s}
+.search-box:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.13)}
+.search-box i{color:var(--muted)}
+.search-box input{border:none;outline:none;flex:1;font:inherit;height:100%;background:transparent}
+.viewmenu{position:relative}
+.viewmenu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:80;min-width:220px;display:none;max-height:340px;overflow-y:auto}
+.viewmenu-pop.open{display:block;animation:pop .18s ease}
+.vm-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:none;background:none;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--text);cursor:pointer;text-align:left}
+.vm-item:hover{background:#f2f7ff}
+.vm-item.active{background:#e3edff;color:var(--primary)}
+.vm-item i{width:18px;text-align:center;color:var(--primary)}
+.breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 22px 14px;font-size:13px}
+.crumb{border:none;background:none;color:var(--primary);font-weight:600;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:6px}
+.crumb:hover{background:#eaf2ff}
+.crumb.active{color:var(--muted);cursor:default;background:none}
+.sep{color:#b6c4dd;font-size:10px}
+/* ===== itens ===== */
+.itens{padding:6px 12px 18px}
+.item-row{display:flex;align-items:center;gap:14px;padding:13px 12px;border-radius:10px;transition:.15s;border-top:1px solid #eef2f9;flex-wrap:wrap}
+.item-row:hover{background:#f4f8ff}
+.lrow{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:8px;transition:.15s;border-top:1px solid #f0f4fa}
+.lrow:hover{background:#f4f8ff}
+.lrow .item-ic{width:30px;height:30px;font-size:13px;flex:0 0 30px;border-radius:8px}
+.lrow .gname{font-weight:600;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item-ic{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex:0 0 42px}
+.ic-pasta{background:#e3edff;color:var(--primary)}
+.ic-doc{background:#e5f6ee;color:var(--success)}
+.ic-pdf{background:#fdeeee;color:var(--danger)}
+.ic-img{background:#e0f5f2;color:#0e8f7e}
+.ic-video{background:#efe6fb;color:#7a3fd4}
+.ic-audio{background:#fdf0e0;color:#d47a1a}
+.ic-sheet{background:#e5f6ee;color:#217a4b}
+.ic-word{background:#e3edff;color:#2b6cd4}
+.ic-zip{background:#f3eee6;color:#8a6a2f}
+.item-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.item-info strong{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-info small{color:var(--muted);font-size:12px}
+.item-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chev{color:#b6c4dd;font-size:12px}
+.item-row[data-action="open-folder"],.lrow[data-action="open-folder"]{cursor:pointer}
+.itens-grid{display:grid;gap:12px;padding:12px 16px 18px}
+.mode-xg{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.mode-g{grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
+.mode-m{grid-template-columns:repeat(auto-fill,minmax(138px,1fr))}
+.mode-p{grid-template-columns:repeat(auto-fill,minmax(106px,1fr));gap:8px}
+.gcard{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 10px 12px;display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;transition:.15s}
+.gcard:hover{box-shadow:0 8px 20px rgba(16,42,90,.12);transform:translateY(-1px)}
+.gcard[data-action="open-folder"]{cursor:pointer}
+.gcard .item-ic{width:64px;height:64px;font-size:27px;flex-basis:64px}
+.mode-g .gcard .item-ic{width:52px;height:52px;font-size:22px;flex-basis:52px}
+.mode-m .gcard .item-ic{width:42px;height:42px;font-size:18px;flex-basis:42px}
+.mode-m .gcard{padding:12px 8px 10px}
+.mode-p .gcard{padding:10px 6px 8px;gap:6px}
+.mode-p .gcard .item-ic{width:30px;height:30px;font-size:14px;flex-basis:30px;border-radius:8px}
+.gname{font-weight:700;color:var(--text);font-size:13.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mode-xg .gname{font-size:15px}
+.mode-p .gname{font-size:11px;font-weight:600}
+.gsmall{color:var(--muted);font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mode-m .gsmall,.mode-p .gsmall{display:none}
+.gcard-actions{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.gcard-actions .btn-ic{width:28px;height:28px;flex-basis:28px;font-size:12px}
+.mode-p .gcard-actions .btn-ic{width:24px;height:24px;flex-basis:24px;font-size:11px}
+.mode-xg .gcard-actions .btn-ic{width:32px;height:32px;flex-basis:32px}
+.vazio{padding:44px 20px;text-align:center;color:var(--primary);grid-column:1/-1}
+.vazio i{font-size:30px;opacity:.55;display:block;margin-bottom:10px}
+.tag{font-size:11px;font-weight:700;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.tag-admin{background:#e6e0fb;color:#5b3fd4}
+.tag-edit{background:#e3edff;color:var(--primary)}
+.tag-down{background:#e0f5f2;color:#0e8f7e}
+.tag-view{background:#eef1f6;color:#5c6c8c}
+.tag-info{background:#e3edff;color:var(--primary);display:inline-flex;align-items:center;gap:6px}
+.tag-arq{background:#eef1f6;color:#41537a;display:inline-flex;align-items:center;gap:5px}
+.mini-perms{display:inline-flex;gap:7px;flex-wrap:wrap}
+.mini-perms i{color:#5c76a8;font-size:12px}
+/* ===== tabela ===== */
+.table-wrap{overflow-x:auto;padding:14px 22px 22px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{color:var(--heading);text-align:left;font-size:12.5px;text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;border-bottom:2px solid #dbe5f3}
+td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
+.tr-right{text-align:right}
+.cell-user{display:flex;align-items:center;gap:10px}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--primary);color:#fff;font-weight:700;font-size:13px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 36px}
+.select-papel{padding:7px 9px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:13px;color:var(--text);background:#fff}
+.select-papel:disabled{background:#eef1f6;color:#7a8aa8}
+/* ===== modal ===== */
+.modal-overlay{position:fixed;inset:0;background:rgba(8,20,45,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:18px;animation:fade .2s}
+.modal-card{background:#fff;border-radius:14px;width:min(1060px,96vw);max-height:92vh;overflow-y:auto;padding:26px 26px 22px;animation:pop .25s ease;box-shadow:0 30px 70px rgba(0,10,40,.35)}
+.modal-card h3{color:var(--heading);font-size:17px;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.modal-card h3 i{color:var(--primary)}
+.modal-sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+.modal-msg{margin:10px 0 18px;color:var(--text)}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;flex-wrap:wrap}
+.ic-danger{color:var(--danger)!important}
+/* ===== editores ===== */
+.w-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;align-items:center}
+.w-toolbar .btn-ic{width:32px;height:32px;flex-basis:32px}
+.word-editor{min-height:300px;max-height:48vh;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 20px;font-size:14px;line-height:1.7}
+.word-editor:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.12)}
+.word-editor h1,.word-editor h2,.word-editor h3{margin:12px 0 8px;color:var(--heading)}
+.word-editor p{margin:0 0 10px}
+.word-editor ul,.word-editor ol{margin:0 0 10px 22px}
+.word-editor table{border-collapse:collapse;width:100%}
+.word-editor td,.word-editor th{border:1px solid var(--border);padding:6px 8px}
+.sheet-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.stab{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer}
+.stab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.sheet-editor-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;background:#fff;max-height:52vh}
+.sheet-table{border-collapse:collapse;font-size:12.5px}
+.sheet-table th{background:#e3edff;color:var(--heading);text-align:left}
+.sheet-table th,.sheet-table td{border:1px solid var(--border);padding:5px 8px;white-space:nowrap}
+.sheet-table.edit td[contenteditable="true"]{min-width:90px;cursor:text}
+.sheet-table.edit td[contenteditable="true"]:focus{outline:2px solid var(--primary);outline-offset:-2px;background:#f4f8ff}
+.sheet-table .rn{background:#eef2f8;color:var(--muted);font-size:11px;text-align:center;min-width:36px;user-select:none}
+/* câmera */
+.cam-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin:10px 0}
+.cam-item{position:relative}
+.cam-item img{width:100%;height:110px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block}
+.cam-item .btn-ic{position:absolute;top:-9px;right:-9px}
+/* ===== permissões da pasta ===== */
+.perm-topbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:0 0 12px}
+.perm-topbar .search-box{height:40px;min-width:200px}
+.perm-bulk{display:flex;gap:8px;flex-wrap:wrap}
+.perm-bulk button{border:1px solid var(--border);background:#fff;color:var(--primary);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer}
+.perm-bulk button:hover{background:var(--primary);color:#fff}
+.perm-scroll{max-height:52vh;overflow-y:auto;padding-right:6px}
+.perm-scroll::-webkit-scrollbar{width:8px}
+.perm-scroll::-webkit-scrollbar-thumb{background:#c4d1e6;border-radius:8px}
+.prow{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:#fff;flex-wrap:wrap;transition:.15s}
+.prow:hover{border-color:#b9cdec;box-shadow:0 3px 10px rgba(16,42,90,.08)}
+.prow .perm-user{flex:1;min-width:200px;display:flex;flex-direction:column;gap:3px}
+.prow .perm-user small{color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.prow .avatar{width:34px;height:34px;flex-basis:34px;font-size:12px}
+.prow-left{display:flex;align-items:center;gap:10px;flex:1;min-width:220px}
+.ptogs{display:flex;gap:6px;flex-wrap:wrap}
+.ptog{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:#fff;color:#a5b2ca;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;transition:.15s;flex:0 0 32px}
+.ptog:hover{border-color:var(--primary);color:var(--primary)}
+.ptog.on{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 2px 6px rgba(21,82,194,.35)}
+.row-preset{max-width:130px;font-size:12px;padding:6px 8px}
+.perm-legenda{display:flex;gap:10px;flex-wrap:wrap;padding:10px 2px 2px;color:var(--muted);font-size:11.5px}
+.perm-legenda i{color:var(--primary);width:14px;text-align:center;margin-right:3px}
+/* ===== checkboxes ===== */
+.perm-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.chk{display:flex;align-items:center;gap:9px;border:1px solid var(--border);border-radius:8px;padding:9px 11px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);background:#fbfcff;transition:.15s}
+.chk:hover{border-color:var(--primary);background:#f4f8ff}
+.chk input{accent-color:var(--primary);width:15px;height:15px;cursor:pointer}
+.chk i{color:var(--primary);width:16px;text-align:center}
+.preset-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.preset-row button{border:1px solid var(--border);background:#fff;color:var(--primary);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer}
+.preset-row button:hover{background:var(--primary);color:#fff}
+.doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.doc-meta{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12.5px;margin:10px 0 14px;padding:10px 12px;background:#f5f8fc;border-radius:8px}
+.doc-meta i{margin-right:5px;color:var(--primary)}
+.doc-body{white-space:pre-wrap;background:#fbfcff;border:1px solid var(--border);border-radius:10px;padding:18px;font-size:14px;line-height:1.65}
+.doc-body.docx-view,.doc-body.sheet-view{white-space:normal;background:#fff}
+.docx-view h1,.docx-view h2,.docx-view h3{margin:14px 0 8px;color:var(--heading)}
+.docx-view p{margin:0 0 10px}
+.docx-view ul,.docx-view ol{margin:0 0 10px 22px}
+.docx-view img{max-width:100%}
+.docx-view table{border-collapse:collapse;width:100%;margin-bottom:10px}
+.docx-view td,.docx-view th{border:1px solid var(--border);padding:6px 8px;font-size:13px}
+.table-x{overflow:visible;max-height:none;margin-bottom:12px}
+.sheet-title{margin:14px 0 6px;color:var(--heading);font-size:14px}
+.pdf-frame{width:100%;height:62vh;border:1px solid var(--border);border-radius:10px;background:#525659}
+.pdf-restrito{height:62vh;overflow:auto;background:#525659;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px;align-items:center;user-select:none;-webkit-user-select:none}
+.pdf-restrito .pdf-page{max-width:100%;height:auto;box-shadow:0 6px 18px rgba(0,0,0,.45);border-radius:2px;pointer-events:none}
+.restrito-aviso{width:100%;display:flex;align-items:center;gap:10px;background:rgba(21,82,194,.92);color:#fff;font-size:12.5px;font-weight:700;border-radius:8px;padding:9px 12px;flex:0 0 auto}
+.prev-img{display:block;margin:0 auto;max-width:100%;border-radius:10px;border:1px solid var(--border)}
+.prev-media{width:100%;max-height:56vh;border-radius:10px;background:#000}
+.no-prev{padding:44px 20px;text-align:center;background:#f5f8fc;border-radius:10px;color:var(--muted)}
+.no-prev i{font-size:44px;display:block;margin-bottom:12px;color:#9fb2d3}
+/* ===== configurações ===== */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.cfg-body{padding:18px 22px}
+.cfg-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.logo-prev-wrap{background:#f5f8fc;border:1px dashed var(--border);border-radius:10px;padding:18px;display:flex;align-items:center;justify-content:center;min-height:130px}
+.logo-prev-wrap img{max-width:230px;max-height:110px;object-fit:contain}
+.fmt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px;margin:12px 0}
+.fmt-grid .chk{padding:8px 10px;font-size:12.5px}
+.empresa-resumo{display:flex;flex-direction:column;gap:8px;font-size:14px;color:#3c4c6e}
+.empresa-resumo i{color:var(--primary);width:18px;text-align:center;margin-right:6px}
+/* ===== perfil / sobre ===== */
+.perfil-top{display:flex;align-items:center;gap:18px;padding:22px}
+.avatar-lg{width:74px;height:74px;border-radius:50%;background:var(--primary);color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.perfil-nome{font-size:19px;color:var(--heading)}
+.sobre-texto{padding:14px 22px 20px;color:#3c4c6e;line-height:1.7;font-size:14px}
+.integ-row{display:flex;gap:10px;padding:0 22px 22px;flex-wrap:wrap}
+.integ-row input{flex:1;min-width:240px;padding:11px 13px;border:1px solid var(--border);border-radius:8px;font:inherit;font-size:13px}
+.integ-row input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.13)}
+.code{background:#0f2557;color:#d7e4ff;border-radius:10px;margin:0 22px 22px;padding:16px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;max-height:340px;overflow:auto;white-space:pre}
+/* ===== toasts ===== */
+#toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:10px;z-index:200}
+.toast{display:flex;align-items:center;gap:10px;background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 10px 30px rgba(10,30,70,.2);font-size:14px;font-weight:600;animation:slideIn .3s ease;border-left:4px solid var(--success);min-width:250px}
+.toast i{color:var(--success)}
+.toast.error{border-left-color:var(--danger)} .toast.error i{color:var(--danger)}
+.toast.info{border-left-color:var(--primary)} .toast.info i{color:var(--primary)}
+.toast.saindo{opacity:0;transform:translateX(20px);transition:.3s}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes slideIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+@media(max-width:960px){
+  .menu-toggle{display:block}
+  .sidebar{position:fixed;left:0;top:66px;bottom:0;z-index:60;transform:translateX(-105%);transition:.28s;box-shadow:20px 0 40px rgba(0,20,60,.15)}
+  .sidebar.open{transform:none}
+  .main{padding:20px 16px}
+  .grid-2,.cfg-cols,.perm-grid{grid-template-columns:1fr}
+  .user-hello{display:none}
+}
+@media(max-width:700px){
+  .topbar{padding:0 12px;gap:8px;height:58px}
+  .topbar .logo-rio{height:36px}
+  .shell{min-height:calc(100vh - 58px)}
+  .sidebar{top:58px}
+  .main{padding:16px 12px}
+  .page-title{font-size:21px}
+  .card-head{padding:14px 14px 0}
+  .toolbar{padding:12px 14px}
+  .search-box{min-width:0;width:100%;flex-basis:100%}
+  .toolbar-actions{margin-left:0;width:100%;justify-content:flex-end}
+  .breadcrumb{padding:0 14px 10px}
+  .itens,.itens-grid{padding:8px 8px 14px}
+  .btn{padding:9px 12px;font-size:13px}
+  .modal-overlay{padding:10px}
+  .modal-card{padding:18px 14px;width:100vw}
+  .modal-actions{justify-content:stretch}
+  .modal-actions .btn{flex:1;justify-content:center}
+  .prow{flex-direction:column;align-items:stretch}
+  .prow-left{min-width:0}
+  .perm-topbar{flex-direction:column;align-items:stretch}
+  .perm-topbar .search-box{width:100%}
+  .doc-meta{gap:8px;font-size:11.5px}
+  .table-wrap{padding:10px 12px 14px}
+  .cfg-body{padding:14px}
+  .sobre-texto{padding:12px 14px 16px}
+  .integ-row{padding:0 14px 16px}
+  .code{margin:0 14px 14px}
+  #toasts{left:12px;right:12px}
+  .toast{min-width:0;width:100%}
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== LOGIN ==================== -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <img id="loginLogo" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
+    <div class="nome-empresa" id="loginEmpresa"></div>
+    <h1>Gestão de Documentos</h1>
+    <p class="sub"><i class="fa-brands fa-google-drive"></i> Drive + Sheets • Câmera, DOCX/XLSX e mais</p>
+    <form id="loginForm" autocomplete="off">
+      <label class="campo">E-mail institucional
+        <input id="loginEmail" type="email" required placeholder="nome@rio.gov.br">
+      </label>
+      <label class="campo">Senha
+        <input id="loginSenha" type="password" required placeholder="••••••••">
+      </label>
+      <div id="loginErro" class="erro"></div>
+      <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
+    </form>
+    <div class="demo-box">
+      <strong><i class="fa-solid fa-key"></i> Contas de demonstração</strong>
+      <div class="demo-row"><span>master@admin.rio.gov.br · admin123 <b>(Master Admin)</b></span><button type="button" data-action="preencher" data-email="master@admin.rio.gov.br" data-senha="admin123">Usar</button></div>
+      <div class="demo-row"><span>ana.souza@rio.gov.br · editor123 <b>(Editor)</b></span><button type="button" data-action="preencher" data-email="ana.souza@rio.gov.br" data-senha="editor123">Usar</button></div>
+      <div class="demo-row"><span>carlos.lima@rio.gov.br · leitor123 <b>(Leitor)</b></span><button type="button" data-action="preencher" data-email="carlos.lima@rio.gov.br" data-senha="leitor123">Usar</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== APP ==================== -->
+<div id="app" class="hidden">
+  <header class="topbar">
+    <button class="menu-toggle" id="menuToggle" title="Menu"><i class="fa-solid fa-bars"></i></button>
+    <img class="logo-rio" id="logoRio" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
+    <div class="topbar-right">
+      <span id="syncBadge"></span>
+      <span class="user-hello" id="userName"></span>
+      <button class="btn btn-primary" data-action="logout"><i class="fa-solid fa-right-from-bracket"></i> Sair</button>
+    </div>
+  </header>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <nav id="sideNav"></nav>
+    </aside>
+    <main class="main"><div id="viewRoot"></div></main>
+  </div>
+</div>
+
+<div id="modalOverlay" class="modal-overlay hidden"><div class="modal-card" id="modalCard"></div></div>
+<div id="toasts"></div>
+
+<script>
+/* ================= UTILITÁRIOS ================= */
+const $  = (s, r) => (r||document).querySelector(s);
+const $$ = (s, r) => Array.from((r||document).querySelectorAll(s));
+const uid = p => p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+const fmtData = ts => { const d = new Date(ts); return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
+const fmtTam = b => b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(1) + ' KB' : (b/1048576).toFixed(1) + ' MB';
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const iniciais = n => n.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
+const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor', visualizador:'Leitor' };
+const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
+const LOGO_PADRAO = 'https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png';
+const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
+const VIEW_MODES = [
+  {m:'xg',       label:'Ícones extra grandes', ic:'fa-display'},
+  {m:'g',        label:'Ícones grandes',       ic:'fa-grip'},
+  {m:'m',        label:'Ícones médios',        ic:'fa-table-cells'},
+  {m:'p',        label:'Ícones pequenos',      ic:'fa-border-all'},
+  {m:'lista',    label:'Lista',                ic:'fa-list-ul'},
+  {m:'detalhes', label:'Detalhes',             ic:'fa-list-check'}
+];
+function formatosPermitidos(){
+  const f = getEmpresa().formats;
+  return (Array.isArray(f) && f.length) ? f : DEFAULT_FORMATS;
+}
+function acceptString(){ return '.' + formatosPermitidos().join(',.'); }
+function formatoVisivel(d, u){
+  if(d.tipo !== 'arquivo') return true;
+  if(ehAdmin(u)) return true;
+  return formatosPermitidos().includes((d.ext || '').toLowerCase());
+}
+function colLetter(n){ let s=''; n++; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; }
+
+/* ===== EMPRESA ===== */
+const EMPRESA_PADRAO = {
+  nome:'Prefeitura da Cidade do Rio de Janeiro', fantasia:'Rio Prefeitura', cnpj:'01.234.567/0001-80',
+  endereco:'Av. Presidente Vargas, nº 1100 - Centro', cidade:'Rio de Janeiro - RJ', cep:'20210-000',
+  telefone:'(21) 3456-7890', email:'contato@rio.gov.br', site:'www.rio.gov.br',
+  responsavel:'Master Admin', logo: LOGO_PADRAO, formats: DEFAULT_FORMATS.slice()
+};
+function getEmpresa(){ return Object.assign({}, EMPRESA_PADRAO, DB.get('Empresa')[0] || {}); }
+function setEmpresa(obj){ DB.set('Empresa', [obj]); }
+
+/* ===== PERMISSÕES ===== */
+const PERMS_LIST = [
+  {k:'visualizar',   label:'Visualizar',   ic:'fa-eye'},
+  {k:'editar',       label:'Editar',       ic:'fa-pen'},
+  {k:'excluir',      label:'Excluir',      ic:'fa-trash-can'},
+  {k:'imprimir',     label:'Imprimir',     ic:'fa-print'},
+  {k:'upload',       label:'Upload',       ic:'fa-upload'},
+  {k:'download',     label:'Download',     ic:'fa-download'},
+  {k:'criar_pasta',  label:'Criar pasta',  ic:'fa-folder-plus'},
+  {k:'excluir_pasta',label:'Excluir pasta',ic:'fa-folder-minus'}
+];
+const ALL_PERMS = PERMS_LIST.map(p => p.k);
+const PRESETS = {
+  visualizador: ['visualizar','imprimir','download'],
+  editor:       ['visualizar','editar','excluir','imprimir','upload','download','criar_pasta'],
+  completo:     ALL_PERMS.slice()
+};
+function presetSet(nome){
+  if(nome === 'leitor' || nome === 'visualizador') return PRESETS.visualizador;
+  if(nome === 'editor') return PRESETS.editor;
+  if(nome === 'completo') return PRESETS.completo;
+  return [];
+}
+function permsCheckboxes(atual){
+  return '<div class="perm-grid">' + PERMS_LIST.map(p =>
+    '<label class="chk"><input type="checkbox" data-perm="' + p.k + '"' + (atual.includes(p.k) ? ' checked' : '') + '><i class="fa-solid ' + p.ic + '"></i> ' + p.label + '</label>'
+  ).join('') + '</div>';
+}
+function lerCheckboxes(rootEl){ return $$('input[data-perm]:checked', rootEl).map(i => i.dataset.perm); }
+function icoPerms(perms){
+  return '<span class="mini-perms">' + PERMS_LIST.filter(p => perms.includes(p.k)).map(p =>
+    '<i class="fa-solid ' + p.ic + '" title="' + p.label + '"></i>').join('') + '</span>';
+}
+
+/* ===== categorias ===== */
+const CATS = {
+  pdf:  {exts:['pdf'], ic:'fa-file-pdf',      cls:'ic-pdf',   rot:'PDF'},
+  img:  {exts:['png','jpg','jpeg','gif','webp','svg','bmp'], ic:'fa-file-image', cls:'ic-img', rot:'Imagem'},
+  video:{exts:['mp4','webm','mov','m4v','mkv'], ic:'fa-file-video', cls:'ic-video', rot:'Vídeo'},
+  audio:{exts:['mp3','wav','ogg','m4a'], ic:'fa-file-audio', cls:'ic-audio', rot:'Áudio'},
+  sheet:{exts:['xls','xlsx','csv','ods'], ic:'fa-file-excel', cls:'ic-sheet', rot:'Planilha'},
+  word: {exts:['doc','docx','odt'], ic:'fa-file-word', cls:'ic-word', rot:'Word'},
+  zip:  {exts:['zip','rar','7z','tar','gz'], ic:'fa-file-zipper', cls:'ic-zip', rot:'Compactado'},
+  txt:  {exts:['txt','md','log','json','xml'], ic:'fa-file-lines', cls:'ic-doc', rot:'Texto'},
+  outro:{exts:[], ic:'fa-file', cls:'ic-doc', rot:'Arquivo'}
+};
+function categoria(d){
+  if(d.tipo === 'texto') return 'txt';
+  for(const k in CATS){ if(k !== 'outro' && CATS[k].exts.includes((d.ext||'').toLowerCase())) return k; }
+  return 'outro';
+}
+function catInfo(d){ return CATS[categoria(d)]; }
+
+/* ============ DB / SYNC ============ */
+const pendingArquivos = {};
+const DB = {
+  get(f){ try{ return JSON.parse(localStorage.getItem('rio_'+f)) || []; }catch(e){ return []; } },
+  set(f, rows){ localStorage.setItem('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
+};
+let pullTimer = null;
+function agendarPull(){
+  if(!Sync.url()) return;
+  clearTimeout(pullTimer);
+  pullTimer = setTimeout(() => {
+    Sync.pull().then(() => {
+      Object.keys(pendingArquivos).forEach(id => {
+        const d = DB.get('Documentos').find(x => x.id === id);
+        if(d && d.driveId) delete pendingArquivos[id];
+      });
+      if(state.view === 'dashboard') renderItens();
+    }).catch(() => {});
+  }, 3500);
+}
+const Sync = {
+  url(){ return localStorage.getItem('rio_gas_url') || ''; },
+  setUrl(u){ if(u) localStorage.setItem('rio_gas_url', u); else localStorage.removeItem('rio_gas_url'); atualizarBadge(); },
+  push(f, rows){
+    const url = this.url(); if(!url) return;
+    let out = rows;
+    if(f === 'Documentos'){
+      out = rows.map(r => {
+        if(r.arquivo && !r.driveId) return r;
+        if(!r.arquivo && pendingArquivos[r.id]) return Object.assign({}, r, {arquivo: pendingArquivos[r.id]});
+        const c = Object.assign({}, r); delete c.arquivo; return c;
+      });
+    }
+    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({folha:f, rows:out})}).catch(()=>{});
+    if(f === 'Documentos') agendarPull();
+  },
+  async pull(){
+    const url = this.url(); if(!url) throw new Error('sem url');
+    const r = await fetch(url); const data = await r.json();
+    FOLHAS.forEach(f => { if(Array.isArray(data[f])) localStorage.setItem('rio_'+f, JSON.stringify(data[f])); });
+  }
+};
+
+/* ============ helpers de arquivo ============ */
+function b64ToBytes(b64){ const bin = atob(b64); const b = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i); return b; }
+function dataURLtoBlobUrl(dataurl){
+  const bytes = b64ToBytes(String(dataurl).split(',')[1]);
+  const mime = (String(dataurl).match(/data:(.*?);/) || [,'application/octet-stream'])[1];
+  return URL.createObjectURL(new Blob([bytes], {type:mime}));
+}
+function dataURLTexto(dataurl){
+  const bin = atob(String(dataurl).split(',')[1]);
+  try{ return decodeURIComponent(escape(bin)); }catch(e){ return bin; }
+}
+function blobToDataURL(blob){
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(blob); });
+}
+function obterBuffer(d){
+  if(d.arquivo) return Promise.resolve(b64ToBytes(d.arquivo.split(',')[1]).buffer);
+  if(d.driveId) return fetch('https://drive.google.com/uc?export=download&id=' + d.driveId)
+    .then(r => { if(!r.ok) throw 0; return r.arrayBuffer(); });
+  return Promise.reject(new Error('sem arquivo'));
+}
+function salvarArquivoBin(d, dataUrl, titulo){
+  const docs = DB.get('Documentos');
+  const tamanho = Math.round(dataUrl.length * 0.75);
+  if(dataUrl.length <= 1600000){
+    DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now()}) : x));
+    return true;
+  }
+  if(!Sync.url()){ toast('Arquivo grande demais para o modo demonstração. Configure a integração Google.','error'); return false; }
+  pendingArquivos[d.id] = dataUrl;
+  DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: '', tamanho: tamanho, atualizadoEm: Date.now()}) : x));
+  return true;
+}
+function fileToJpegDataUrl(file, maxDim, quality){
+  maxDim = maxDim || 1600; quality = quality || 0.82;
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const sc = Math.min(1, maxDim / Math.max(w, h));
+        w = Math.round(w * sc); h = Math.round(h * sc);
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        res(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = rej;
+      img.src = String(r.result);
+    };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+function paginasParaPDF(pages){
+  const jsPDF = window.jspdf.jsPDF;
+  const pdf = new jsPDF({unit:'mm', format:'a4'});
+  pages.forEach((p, i) => {
+    if(i > 0) pdf.addPage();
+    const props = pdf.getImageProperties(p);
+    const pageW = 210, pageH = 297, margin = 8;
+    const ratio = Math.min((pageW - 2*margin) / props.width, (pageH - 2*margin) / props.height);
+    const w = props.width * ratio, h = props.height * ratio;
+    pdf.addImage(p, 'JPEG', (pageW - w) / 2, (pageH - h) / 2, w, h);
+  });
+  return pdf.output('datauristring');
+}
+/* ===== pré-visualização DOCX / XLSX ===== */
+function renderDocx(buf, cont){
+  if(!window.mammoth) throw new Error('mammoth indisponível');
+  return window.mammoth.convertToHtml({arrayBuffer: buf}).then(res => {
+    cont.classList.add('docx-view');
+    cont.innerHTML = (res.value && res.value.trim()) ? res.value : '<p>(documento vazio)</p>';
+  });
+}
+function renderXlsx(buf, cont){
+  if(!window.XLSX) throw new Error('xlsx indisponível');
+  const wb = window.XLSX.read(new Uint8Array(buf), {type:'array'});
+  let html = '';
+  wb.SheetNames.forEach(name => {
+    const ws = wb.Sheets[name];
+    const rows = window.XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    if(!rows.length) return;
+    html += '<h4 class="sheet-title"><i class="fa-solid fa-table-cells" style="color:var(--primary);margin-right:6px"></i>' + esc(name) + '</h4>' +
+      '<div class="table-x"><table class="sheet-table"><tbody>' +
+      rows.slice(0, 2000).map((r, i) => '<tr>' + r.map(c => (i === 0 ? '<th>' : '<td>') + esc(String(c)) + (i === 0 ? '</th>' : '</td>')).join('') + '</tr>').join('') +
+      '</tbody></table></div>';
+  });
+  cont.classList.add('sheet-view');
+  cont.innerHTML = html || '<p>(planilha vazia)</p>';
+}
+function baixarArquivo(d){
+  const ext = d.ext || (d.tipo === 'texto' ? 'txt' : 'bin');
+  const nome = (d.titulo || 'documento') + '.' + ext;
+  if(d.arquivo){
+    const url = dataURLtoBlobUrl(d.arquivo);
+    const a = document.createElement('a'); a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return;
+  }
+  if(d.tipo === 'texto' && d.conteudo != null){
+    const url = URL.createObjectURL(new Blob([d.conteudo], {type:'text/plain'}));
+    const a = document.createElement('a'); a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return;
+  }
+  if(d.driveId){ window.open('https://drive.google.com/uc?export=download&id=' + d.driveId, '_blank'); return; }
+  toast('Arquivo não disponível localmente. Configure a integração Google.','error');
+}
+function cabecalhoImpressao(){
+  const e = getEmpresa();
+  return '<div style="text-align:center;border-bottom:2px solid #1552c2;padding-bottom:10px;margin-bottom:18px">' +
+    '<img src="' + esc(e.logo) + '" style="height:48px;object-fit:contain"><br>' +
+    '<strong style="font-size:15px">' + esc(e.nome) + '</strong><br>' +
+    '<small>' + esc(e.endereco) + ' - ' + esc(e.cidade) + ' • CEP ' + esc(e.cep) + '<br>' +
+    'Tel: ' + esc(e.telefone) + ' • ' + esc(e.email) + ' • ' + esc(e.site) + ' • CNPJ: ' + esc(e.cnpj) + '</small></div>';
+}
+function imprimirDoc(d){
+  const cat = categoria(d);
+  if(d.tipo === 'texto' || (d.arquivo && (cat === 'txt' || cat === 'sheet' || cat === 'word'))){
+    let texto = '';
+    if(d.tipo === 'texto') texto = d.conteudo;
+    else if(cat === 'txt' || cat === 'sheet') texto = dataURLTexto(d.arquivo);
+    const w = window.open('', '_blank');
+    if(!w){ toast('Permita pop-ups para imprimir.','error'); return; }
+    if(cat === 'word' && window.mammoth){
+      window.mammoth.convertToHtml({arrayBuffer: b64ToBytes(d.arquivo.split(',')[1]).buffer}).then(res => {
+        w.document.write('<html><head><title>' + esc(d.titulo) + '</title></head><body style="font-family:Arial;padding:40px">' + cabecalhoImpressao() + res.value + '<scr'+'ipt>window.onload=function(){window.print()}<\/scr'+'ipt></body></html>');
+        w.document.close();
+      }).catch(() => {});
+      return;
+    }
+    w.document.write('<html><head><title>' + esc(d.titulo) + '</title></head><body style="font-family:Arial;padding:40px">' + cabecalhoImpressao() + '<h2>' + esc(d.titulo) + '</h2><pre style="white-space:pre-wrap;font-size:14px">' + esc(texto) + '</pre><scr'+'ipt>window.onload=function(){window.print()}<\/scr'+'ipt></body></html>');
+    w.document.close();
+    return;
+  }
+  if(d.arquivo && (cat === 'pdf' || cat === 'img')){
+    const url = cat === 'img' ? d.arquivo : dataURLtoBlobUrl(d.arquivo);
+    const w = window.open(cat === 'img' ? '' : url, '_blank');
+    if(cat === 'img' && w){
+      w.document.write('<html><head><title>' + esc(d.titulo) + '</title></head><body style="margin:0">' + cabecalhoImpressao() + '<img src="' + url + '" style="max-width:100%"><scr'+'ipt>window.onload=function(){window.print()}<\/scr'+'ipt></body></html>');
+      w.document.close();
+    } else if(w){
+      setTimeout(() => { try{ w.focus(); w.print(); }catch(e){} }, 900);
+    }
+    return;
+  }
+  if(d.driveId){ window.open('https://drive.google.com/file/d/' + d.driveId + '/preview', '_blank'); toast('Use o botão de impressão do visualizador do Drive.','info'); return; }
+  toast('Não foi possível imprimir este formato.','error');
+}
+
+/* ===== EDITOR DE DOCX ===== */
+function abrirEditorWord(d){
+  toast('Abrindo editor de Word…','info');
+  obterBuffer(d).then(buf => {
+    if(!window.mammoth) throw new Error('mammoth');
+    return window.mammoth.convertToHtml({arrayBuffer: buf}).then(res => {
+      openModal('<h3><i class="fa-solid fa-file-word"></i> Editar documento Word</h3>' +
+        '<label class="campo">Título do arquivo<input id="wTitulo" value="' + esc(d.titulo) + '"></label>' +
+        '<div class="w-toolbar">' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="bold" title="Negrito"><i class="fa-solid fa-bold"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="italic" title="Itálico"><i class="fa-solid fa-italic"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="underline" title="Sublinhado"><i class="fa-solid fa-underline"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="strikeThrough" title="Tachado"><i class="fa-solid fa-strikethrough"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="insertUnorderedList" title="Lista com marcadores"><i class="fa-solid fa-list-ul"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="insertOrderedList" title="Lista numerada"><i class="fa-solid fa-list-ol"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="formatBlock" data-val="H2" title="Título H2"><b>H2</b></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="formatBlock" data-val="H3" title="Título H3"><b>H3</b></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="formatBlock" data-val="P" title="Parágrafo"><i class="fa-solid fa-paragraph"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="justifyLeft" title="Alinhar à esquerda"><i class="fa-solid fa-align-left"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="justifyCenter" title="Centralizar"><i class="fa-solid fa-align-center"></i></button>' +
+          '<button class="btn-ic" data-action="w-cmd" data-cmd="removeFormat" title="Limpar formatação"><i class="fa-solid fa-eraser"></i></button>' +
+        '</div>' +
+        '<div id="wEditor" class="word-editor" contenteditable="true">' + (res.value || '<p></p>') + '</div>' +
+        '<p class="modal-sub" style="margin-top:10px"><i class="fa-solid fa-circle-info"></i> Ao salvar, o conteúdo é reempacotado como arquivo .docx compatível com o Word.</p>' +
+        '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+        '<button class="btn btn-primary" data-action="salvar-word" data-id="' + d.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar DOCX</button></div>');
+    });
+  }).catch(() => toast('Não foi possível abrir o DOCX para edição.','error'));
+}
+
+/* ===== EDITOR DE PLANILHA (próprio, com abas) ===== */
+let sheetState = null;
+function abrirEditorSheet(d){
+  toast('Abrindo editor de planilha…','info');
+  obterBuffer(d).then(buf => {
+    if(!window.XLSX) throw new Error('xlsx');
+    const wb = window.XLSX.read(new Uint8Array(buf), {type:'array'});
+    const sheets = wb.SheetNames.map(name => ({
+      name: name,
+      aoa: window.XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:''})
+    }));
+    if(!sheets.length) sheets.push({name:'Planilha1', aoa:[]});
+    sheets.forEach(s => {
+      while(s.aoa.length < 12) s.aoa.push([]);
+      s.aoa.forEach(r => { while(r.length < 6) r.push(''); });
+    });
+    sheetState = {sheets: sheets, active: 0};
+    openModal('<h3><i class="fa-solid fa-file-excel"></i> Editar planilha Excel</h3>' +
+      '<label class="campo">Título do arquivo<input id="sTitulo" value="' + esc(d.titulo) + '"></label>' +
+      '<div class="w-toolbar">' +
+        '<button class="btn btn-light" style="padding:8px 12px;font-size:12px" data-action="s-addrow"><i class="fa-solid fa-plus"></i> Linha</button>' +
+        '<button class="btn btn-light" style="padding:8px 12px;font-size:12px" data-action="s-delrow"><i class="fa-solid fa-minus"></i> Linha</button>' +
+        '<button class="btn btn-light" style="padding:8px 12px;font-size:12px" data-action="s-addcol"><i class="fa-solid fa-plus"></i> Coluna</button>' +
+        '<button class="btn btn-light" style="padding:8px 12px;font-size:12px" data-action="s-delcol"><i class="fa-solid fa-minus"></i> Coluna</button>' +
+        '<button class="btn btn-light" style="padding:8px 12px;font-size:12px" data-action="s-addsheet"><i class="fa-solid fa-layer-group"></i> Nova aba</button>' +
+      '</div>' +
+      '<div class="sheet-tabs" id="sheetTabs"></div>' +
+      '<div class="sheet-editor-wrap"><div id="sheetEditor"></div></div>' +
+      '<p class="modal-sub" style="margin-top:8px"><i class="fa-solid fa-circle-info"></i> Toque/clique em uma célula para editar. Use as abas para alternar entre planilhas.</p>' +
+      '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+      '<button class="btn btn-primary" data-action="salvar-sheet" data-id="' + d.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar XLSX</button></div>');
+    renderSheetEditor();
+  }).catch(() => toast('Não foi possível abrir a planilha para edição.','error'));
+}
+function renderSheetEditor(){
+  if(!sheetState) return;
+  const st = sheetState;
+  $('#sheetTabs').innerHTML = st.sheets.map((s, i) =>
+    '<button class="stab ' + (i === st.active ? 'active' : '') + '" data-action="s-tab" data-idx="' + i + '">' + esc(s.name) + '</button>'
+  ).join('');
+  const s = st.sheets[st.active];
+  const cols = s.aoa.reduce((m, r) => Math.max(m, r.length), 1);
+  const head = '<tr><th class="rn"></th>' + Array.from({length: cols}, (_, c) => '<th>' + colLetter(c) + '</th>').join('') + '</tr>';
+  const body = s.aoa.map((r, ri) =>
+    '<tr><td class="rn">' + (ri + 1) + '</td>' +
+    Array.from({length: cols}, (_, ci) => '<td contenteditable="true">' + esc(String(r[ci] != null ? r[ci] : '')) + '</td>').join('') + '</tr>'
+  ).join('');
+  $('#sheetEditor').innerHTML = '<table class="sheet-table edit"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+}
+function syncActiveFromDOM(){
+  if(!sheetState) return;
+  const rows = $$('#sheetEditor tbody tr');
+  sheetState.sheets[sheetState.active].aoa = rows.map(tr =>
+    $$('td:not(.rn)', tr).map(td => td.textContent)
+  );
+}
+function sheetCols(){
+  return sheetState.sheets[sheetState.active].aoa.reduce((m, r) => Math.max(m, r.length), 1);
+}
+
+/* ===== CÂMERA ===== */
+let camPages = [];
+function modalCamera(){
+  camPages = [];
+  const pasta = pastaPorId(state.currentFolderId);
+  openModal('<h3><i class="fa-solid fa-camera"></i> Digitalizar com a câmera</h3>' +
+    '<p class="modal-sub">Capture <b>uma ou várias páginas</b> pelo celular (ou adicione imagens da galeria) e salve como <b>PDF único</b> ou como imagens na pasta atual' +
+    (pasta ? ' (<b>' + esc(pasta.nome) + '</b>)' : ' (Raiz)') + '. As imagens são otimizadas automaticamente.</p>' +
+    '<div class="w-toolbar" style="margin-top:0">' +
+      '<button class="btn btn-primary" data-action="cam-add" style="padding:9px 14px;font-size:13px"><i class="fa-solid fa-camera"></i> Capturar página</button>' +
+      '<button class="btn btn-light" data-action="cam-gallery" style="padding:9px 14px;font-size:13px"><i class="fa-solid fa-images"></i> Galeria (várias)</button>' +
+    '</div>' +
+    '<input type="file" id="camInput" accept="image/*" capture="environment" class="hidden">' +
+    '<input type="file" id="camGallery" accept="image/*" multiple class="hidden">' +
+    '<div id="camPages" class="cam-grid"></div>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-light" data-action="cam-save-imgs"><i class="fa-solid fa-image"></i> Salvar imagens</button>' +
+    '<button class="btn btn-primary" data-action="cam-save-pdf"><i class="fa-solid fa-file-pdf"></i> Salvar como PDF</button></div>');
+  renderCamPages();
+}
+function renderCamPages(){
+  const el = $('#camPages'); if(!el) return;
+  el.innerHTML = camPages.length
+    ? camPages.map((p, i) => '<div class="cam-item"><img src="' + p + '" alt="Página ' + (i+1) + '"><button class="btn-ic danger" data-action="cam-remove" data-idx="' + i + '" title="Remover página"><i class="fa-solid fa-xmark"></i></button></div>').join('')
+    : '<p class="modal-sub" style="margin:6px 0">Nenhuma página capturada ainda.</p>';
+}
+function salvarDocArquivo(base, dataUrl){
+  const docs = DB.get('Documentos');
+  if(dataUrl.length <= 1600000){
+    docs.push(Object.assign(base, {arquivo: dataUrl, tamanho: Math.round(dataUrl.length * 0.75)}));
+    DB.set('Documentos', docs);
+    return true;
+  }
+  if(!Sync.url()){ toast('Arquivo grande demais para o modo demonstração (~1,2 MB). Configure a integração Google.','error'); return false; }
+  const idDoc = base.id;
+  pendingArquivos[idDoc] = dataUrl;
+  docs.push(Object.assign(base, {arquivo: '', tamanho: Math.round(dataUrl.length * 0.75)}));
+  DB.set('Documentos', docs);
+  return true;
+}
+
+/* ===== VISUALIZAÇÃO PROTEGIDA DE PDF ===== */
+let bloqueioAtivo = false;
+let pdfPendente = null;
+let officePendente = null;
+if(window.pdfjsLib){
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+async function renderPdfProtegido(bytes, container){
+  if(!window.pdfjsLib) throw new Error('pdf.js indisponível');
+  const pdf = await window.pdfjsLib.getDocument({data: bytes}).promise;
+  container.innerHTML = '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Visualização protegida — sem barra de download/impressão (' + pdf.numPages + ' página' + (pdf.numPages>1?'s':'') + ')</div>';
+  for(let i = 1; i <= pdf.numPages; i++){
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({scale: 1.5});
+    const canvas = document.createElement('canvas');
+    canvas.className = 'pdf-page';
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    container.appendChild(canvas);
+    await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
+  }
+}
+document.addEventListener('keydown', e => {
+  if(!bloqueioAtivo) return;
+  if((e.ctrlKey || e.metaKey) && ['p','s'].includes((e.key||'').toLowerCase())){
+    e.preventDefault();
+    toast('Ação bloqueada pela política de permissões.','error');
+  }
+});
+document.addEventListener('contextmenu', e => {
+  if(bloqueioAtivo && e.target.closest('.pdf-restrito')) e.preventDefault();
+});
+document.addEventListener('dragstart', e => {
+  if(bloqueioAtivo && e.target.closest('.pdf-restrito')) e.preventDefault();
+});
+document.addEventListener('mousedown', e => {
+  if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
+});
+
+/* ============ arquivos de exemplo ============ */
+function b64txt(s){ return btoa(unescape(encodeURIComponent(s))); }
+function gerarExemplosPDF(){
+  if(!(window.jspdf && window.jspdf.jsPDF)) return [];
+  const jsPDF = window.jspdf.jsPDF;
+  const out = [];
+  let d = new jsPDF();
+  d.setFont('times','bold'); d.setFontSize(14);
+  d.text('PREFEITURA DA CIDADE DO RIO DE JANEIRO', 105, 20, {align:'center'});
+  d.setFontSize(12); d.text('DIÁRIO OFICIAL DO MUNICÍPIO - EDIÇÃO EXTRA', 105, 28, {align:'center'});
+  d.setFont('times','normal'); d.setFontSize(11);
+  d.text('Rio de Janeiro, 12 de agosto de 2026.', 105, 36, {align:'center'});
+  d.setLineWidth(0.4); d.line(20, 41, 190, 41);
+  d.setFont('times','bold'); d.text('DECRETO RIO Nº 52.345/2026', 20, 50);
+  d.setFont('times','normal');
+  let y = 57;
+  const t1 = d.splitTextToSize('Dispõe sobre a digitalização e a gestão eletrônica de documentos no âmbito da Administração Pública Municipal.', 170);
+  d.text(t1, 20, y); y += t1.length * 5.5 + 6;
+  ['Art. 1º Fica instituído o Sistema Eletrônico de Gestão Documental.',
+   'Art. 2º Os documentos originais deverão ser guardados pelo prazo de 5 (cinco) anos.',
+   'Art. 3º As pastas digitais observarão as permissões de acesso por perfil de usuário.',
+   'Art. 4º Este Decreto entra em vigor na data de sua publicação.'].forEach(a => {
+    const bl = d.splitTextToSize(a, 170); d.text(bl, 20, y); y += bl.length * 5.5 + 4;
+  });
+  out.push({titulo:'Diário Oficial - Edição Extra 12/08/2026', ext:'pdf', mime:'application/pdf', arquivo:d.output('dataurlstring')});
+  d = new jsPDF();
+  d.setFont('helvetica','bold'); d.setFontSize(13);
+  d.text('EDITAL DE CONCORRÊNCIA Nº 04/2026', 105, 25, {align:'center'});
+  d.setFont('helvetica','normal'); d.setFontSize(11);
+  y = 40;
+  ['Objeto: contratação de empresa especializada em digitalização de acervo documental.',
+   '1. Das propostas: até 30/09/2026, às 14h.',
+   '2. Da habilitação: documentos conforme Anexo I.',
+   '3. Dos recursos: prazo legal de 5 dias úteis.'].forEach(tx => {
+    const bl = d.splitTextToSize(tx, 170); d.text(bl, 20, y); y += bl.length * 5.5 + 5;
+  });
+  out.push({titulo:'Edital de Concorrência Nº 04/2026 (PDF oficial)', ext:'pdf', mime:'application/pdf', arquivo:d.output('dataurlstring')});
+  return out;
+}
+
+/* ================= SEED ================= */
+function seed(){
+  if (DB.get('Empresa').length === 0) setEmpresa(EMPRESA_PADRAO);
+  if (localStorage.getItem('rio_seeded_v5')) return;
+  const t = Date.now();
+  DB.set('Usuarios', [
+    {id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123', papel:'master', perms:ALL_PERMS.slice(), criadoEm:t},
+    {id:'u_ana',    nome:'Ana Souza',    email:'ana.souza@rio.gov.br',    senha:'editor123', papel:'editor', perms:PRESETS.editor.slice(), criadoEm:t},
+    {id:'u_carlos', nome:'Carlos Lima',  email:'carlos.lima@rio.gov.br',  senha:'leitor123', papel:'visualizador', perms:PRESETS.visualizador.slice(), criadoEm:t}
+  ]);
+  DB.set('Pastas', [
+    {id:'f_pub', nome:'Publicações Oficiais',     parentId:null,    criadaPor:'u_master', criadaEm:t},
+    {id:'f_adm', nome:'Documentos Administrativos', parentId:null,  criadaPor:'u_master', criadaEm:t},
+    {id:'f_rh',  nome:'RH - Recursos Humanos',     parentId:null,    criadaPor:'u_master', criadaEm:t},
+    {id:'f_edi', nome:'Editais e Chamamentos',     parentId:'f_pub', criadaPor:'u_master', criadaEm:t}
+  ]);
+  DB.set('Permissoes', [
+    {id:'p1', pastaId:'f_pub', userId:'u_ana',    perms:['visualizar','editar','excluir','imprimir','upload','download','criar_pasta']},
+    {id:'p2', pastaId:'f_pub', userId:'u_carlos', perms:['visualizar','download','imprimir']},
+    {id:'p3', pastaId:'f_adm', userId:'u_ana',    perms:['visualizar','imprimir']},
+    {id:'p4', pastaId:'f_edi', userId:'u_carlos', perms:['visualizar','imprimir']}
+  ]);
+  const docs = [
+    {id:'d1', pastaId:'f_pub', titulo:'Decreto Rio Nº 52.345/2026', tipo:'texto', criadoPor:'u_master', criadoEm:t, atualizadoEm:t,
+     conteudo:'DECRETO RIO Nº 52.345/2026\n\nDispõe sobre a digitalização e gestão eletrônica de documentos no âmbito da Administração Pública Municipal.\n\nArt. 1º Fica instituído o Sistema Eletrônico de Gestão Documental.\nArt. 2º Os documentos originais deverão ser guardados pelo prazo de 5 (cinco) anos.\nArt. 3º Este Decreto entra em vigor na data de sua publicação.\n\nRio de Janeiro, 12 de agosto de 2026.'},
+    {id:'d3', pastaId:'f_adm', titulo:'Ata de Reunião - 02/2026', tipo:'texto', criadoPor:'u_ana', criadoEm:t, atualizadoEm:t,
+     conteudo:'ATA DE REUNIÃO 02/2026\n\nPauta: implantação do sistema de documentos digitais.\n\nDeliberações:\n1) Aprovação do cronograma de implantação;\n2) Treinamento de usuários em setembro/2026;\n3) Revisão das permissões de acesso por pasta.'},
+    {id:'d4', pastaId:'f_rh', titulo:'Folha de Ponto - Janeiro 2026 (Confidencial)', tipo:'texto', criadoPor:'u_master', criadoEm:t, atualizadoEm:t,
+     conteudo:'FOLHA DE PONTO - JANEIRO/2026\n\nDocumento CONFIDENCIAL de acesso restrito.\n\nServidor: ...\nHoras trabalhadas: ...\nObservações: ...'}
+  ];
+  gerarExemplosPDF().forEach((p, i) => {
+    docs.push({id:'d'+(6+i), pastaId: i === 0 ? 'f_pub' : 'f_edi', titulo:p.titulo, tipo:'arquivo', ext:p.ext, mime:p.mime, arquivo:p.arquivo, tamanho:Math.round(p.arquivo.length * 0.75), criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
+  });
+  const txt = 'COMUNICADO INTERNO Nº 07/2026\n\nSenhores servidores,\n\nInformamos que o novo sistema de gestão documental entra em operação em 01/09/2026.\n\nAtenciosamente,\nCoordenadoria de Administração.';
+  docs.push({id:'d9', pastaId:'f_adm', titulo:'Comunicado Interno 07/2026', tipo:'arquivo', ext:'txt', mime:'text/plain', arquivo:'data:text/plain;base64,' + b64txt(txt), tamanho:txt.length, criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
+  const csv = 'protocolo;setor;status\n2026/004517;SEMFA;Aberto\n2026/004518;SEMED;Em análise\n2026/004519;SEMAS;Concluído\n2026/004520;SECON;Aberto';
+  docs.push({id:'d10', pastaId:'f_adm', titulo:'Relatório de Protocolos 2026 (CSV)', tipo:'arquivo', ext:'csv', mime:'text/csv', arquivo:'data:text/csv;base64,' + b64txt(csv), tamanho:csv.length, criadoPor:'u_ana', criadoEm:t, atualizadoEm:t});
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="220"><rect width="420" height="220" rx="14" fill="#1552c2"/><circle cx="210" cy="92" r="46" fill="#ffffff"/><text x="210" y="100" font-size="26" fill="#1552c2" text-anchor="middle" font-family="Arial" font-weight="bold">RIO</text><text x="210" y="182" font-size="20" fill="#ffffff" text-anchor="middle" font-family="Arial">Prefeitura do Rio - SGD</text></svg>';
+  docs.push({id:'d11', pastaId:'f_pub', titulo:'Identidade Visual - SGD (SVG)', tipo:'arquivo', ext:'svg', mime:'image/svg+xml', arquivo:'data:image/svg+xml;base64,' + b64txt(svg), tamanho:svg.length, criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
+  DB.set('Documentos', docs);
+  localStorage.setItem('rio_seeded_v5','1');
+}
+
+/* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
+let session = null;
+try{ session = JSON.parse(localStorage.getItem('rio_session') || 'null'); }catch(e){ session = null; }
+/* Visualização padrão do Dashboard: DETALHES (pode ser alterada na sessão via menu "Visualizar") */
+const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
+let currentBlobUrl = null;
+let cfgLogo = null;
+
+function currentUser(){ return session ? DB.get('Usuarios').find(u => u.id === session.userId) : null; }
+function ehAdmin(u){ return u && (u.papel === 'master' || u.papel === 'admin'); }
+function pastaPorId(id){ return id ? DB.get('Pastas').find(p => p.id === id) : null; }
+function permsEff(userId, pasta){
+  const u = DB.get('Usuarios').find(x => x.id === userId);
+  if(!u || !pasta) return [];
+  if(ehAdmin(u)) return ALL_PERMS.slice();
+  const pastas = DB.get('Pastas');
+  const usuarios = DB.get('Usuarios');
+  let cur = pasta, grant = null;
+  while(cur){
+    if(cur.criadaPor === userId){ grant = ALL_PERMS.slice(); break; }
+    const e = DB.get('Permissoes').find(p => p.pastaId === cur.id && p.userId === userId);
+    if(e){ grant = e.perms || []; break; }
+    const owner = usuarios.find(x => x.id === cur.criadaPor);
+    const ownerAdmin = !owner || ehAdmin(owner);
+    if(!ownerAdmin){ grant = null; break; }
+    cur = cur.parentId ? pastas.find(p => p.id === cur.parentId) : null;
+  }
+  if(!grant) return [];
+  const global = u.perms || ALL_PERMS.slice();
+  return grant.filter(k => global.includes(k));
+}
+function permsAtuais(){
+  const u = currentUser();
+  if(ehAdmin(u)) return ALL_PERMS.slice();
+  if(!state.currentFolderId) return [];
+  return permsEff(u.id, pastaPorId(state.currentFolderId));
+}
+function permsDoc(d){
+  const u = currentUser();
+  if(ehAdmin(u)) return ALL_PERMS.slice();
+  if(!d.pastaId) return [];
+  return permsEff(u.id, pastaPorId(d.pastaId));
+}
+function trilha(){
+  const chain = []; let cur = pastaPorId(state.currentFolderId);
+  while(cur){ chain.unshift(cur); cur = pastaPorId(cur.parentId); }
+  return chain;
+}
+function excluirPastaRec(id){
+  DB.get('Pastas').filter(p => p.parentId === id).forEach(f => excluirPastaRec(f.id));
+  DB.set('Pastas',     DB.get('Pastas').filter(p => p.id !== id));
+  DB.set('Documentos', DB.get('Documentos').filter(d => d.pastaId !== id));
+  DB.set('Permissoes', DB.get('Permissoes').filter(p => p.pastaId !== id));
+}
+
+/* ================= TOAST / MODAL ================= */
+function toast(msg, tipo){
+  tipo = tipo || 'success';
+  const icons = {success:'fa-circle-check', error:'fa-triangle-exclamation', info:'fa-circle-info'};
+  const t = document.createElement('div');
+  t.className = 'toast ' + tipo;
+  t.innerHTML = '<i class="fa-solid ' + icons[tipo] + '"></i><span>' + esc(msg) + '</span>';
+  $('#toasts').appendChild(t);
+  setTimeout(() => { t.classList.add('saindo'); setTimeout(() => t.remove(), 320); }, 3400);
+}
+function openModal(html){ $('#modalCard').innerHTML = html; $('#modalOverlay').classList.remove('hidden'); }
+function fecharModal(){
+  $('#modalOverlay').classList.add('hidden');
+  bloqueioAtivo = false; pdfPendente = null; officePendente = null; sheetState = null; camPages = [];
+  if(currentBlobUrl){ const u = currentBlobUrl; currentBlobUrl = null; setTimeout(() => { try{URL.revokeObjectURL(u)}catch(e){} }, 1500); }
+}
+let acaoPendente = null;
+function modalConfirm(titulo, msg, fn){
+  acaoPendente = fn;
+  openModal('<h3><i class="fa-solid fa-triangle-exclamation ic-danger"></i> ' + titulo + '</h3>' +
+    '<p class="modal-msg">' + msg + '</p>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-danger" data-action="confirmar-pendente"><i class="fa-solid fa-trash-can"></i> Excluir</button></div>');
+}
+$('#modalOverlay').addEventListener('click', e => { if(e.target === $('#modalOverlay')) fecharModal(); });
+
+/* ================= RENDER GERAL ================= */
+function aplicarMarca(){
+  const e = getEmpresa();
+  $('#logoRio').src = e.logo; $('#logoRio').title = e.nome;
+  $('#loginLogo').src = e.logo; $('#loginEmpresa').textContent = e.nome;
+  document.title = e.fantasia + ' — Gestão de Documentos';
+}
+function mostrarLogin(){
+  $('#app').classList.add('hidden');
+  $('#loginScreen').classList.remove('hidden');
+  state.view = 'dashboard'; state.currentFolderId = null; state.search = '';
+  state.viewMode = 'detalhes';
+  aplicarMarca();
+}
+function iniciarApp(){
+  $('#loginScreen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  state.viewMode = 'detalhes';
+  renderApp();
+}
+function renderApp(){
+  $('#userName').textContent = 'Olá, ' + currentUser().nome;
+  aplicarMarca();
+  renderSidebar(); atualizarBadge(); renderView();
+}
+function renderSidebar(){
+  const u = currentUser();
+  const itens = [
+    {view:'dashboard', ic:'fa-house', label:'Dashboard'},
+    {view:'usuarios',  ic:'fa-users', label:'Gerenciar Usuários'},
+    {view:'perfil',    ic:'fa-user-gear', label:'Meu Perfil'},
+    ...(ehAdmin(u) ? [
+      {view:'config', ic:'fa-gear', label:'Configurações'},
+      {view:'sobre',  ic:'fa-book', label:'Sobre'}
+    ] : [])
+  ];
+  $('#sideNav').innerHTML = itens.map(i =>
+    '<button class="nav-item ' + (state.view === i.view ? 'active' : '') + '" data-action="nav" data-view="' + i.view + '"><i class="fa-solid ' + i.ic + '"></i> ' + i.label + '</button>'
+  ).join('');
+}
+function renderView(){
+  const u = currentUser();
+  if(state.view === 'config' && !ehAdmin(u)) state.view = 'dashboard';
+  if(state.view === 'sobre'  && !ehAdmin(u)) state.view = 'dashboard';
+  if(state.view === 'dashboard') renderDashboard();
+  else if(state.view === 'usuarios') renderUsuarios();
+  else if(state.view === 'perfil') renderPerfil();
+  else if(state.view === 'config') renderConfig();
+  else renderSobre();
+}
+function atualizarBadge(){
+  const on = !!Sync.url();
+  const html = on
+    ? '<span class="sync on"><i class="fa-solid fa-circle"></i> Sheets/Drive conectado</span>'
+    : '<span class="sync off"><i class="fa-solid fa-circle"></i> Modo demonstração</span>';
+  const b1 = $('#syncBadge');  if(b1) b1.innerHTML = html;
+  const b2 = $('#syncBadge2'); if(b2) b2.innerHTML = html;
+}
+
+/* ================= DASHBOARD ================= */
+function renderDashboard(){
+  const u = currentUser();
+  const atual = pastaPorId(state.currentFolderId);
+  if(state.currentFolderId && (!atual || !permsEff(u.id, atual).includes('visualizar'))) state.currentFolderId = null;
+  const perms = permsAtuais();
+  const vm = VIEW_MODES.find(v => v.m === state.viewMode) || VIEW_MODES[5];
+  $('#viewRoot').innerHTML =
+  '<div class="view">' +
+    '<h1 class="page-title">Dashboard</h1>' +
+    '<section class="card">' +
+      '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Minhas Pastas</h2>' +
+        (state.currentFolderId ? '<span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
+      '</div>' +
+      '<div class="toolbar">' +
+        '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" placeholder="Pesquisar documentos..." value="' + esc(state.search) + '"></div>' +
+        '<div class="toolbar-actions">' +
+          (perms.includes('criar_pasta') ? '<button class="btn btn-light" data-action="nova-pasta"><i class="fa-solid fa-folder-plus"></i> Nova Pasta</button>' : '') +
+          (perms.includes('upload')
+            ? '<button class="btn btn-light" data-action="novo-doc"><i class="fa-solid fa-file-pen"></i> Novo Documento</button>' +
+              '<button class="btn btn-light" data-action="abrir-camera" title="Digitalizar com a câmera do celular"><i class="fa-solid fa-camera"></i> Câmera</button>' +
+              '<button class="btn btn-primary" data-action="enviar-arquivo" title="Formatos permitidos: ' + esc(formatosPermitidos().join(', ')) + '"><i class="fa-solid fa-upload"></i> Enviar Arquivo</button>'
+            : '') +
+          '<div class="viewmenu"><button class="btn btn-light" data-action="menu-view" title="Modo de visualização: ' + vm.label + '"><i class="fa-solid ' + vm.ic + '"></i> Visualizar</button>' +
+            '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
+              '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
+            ).join('') + '</div></div>' +
+          '<button class="btn btn-light" data-action="voltar" ' + (state.currentFolderId ? '' : 'disabled') + '><i class="fa-solid fa-arrow-left"></i> Voltar</button>' +
+        '</div>' +
+      '</div>' +
+      '<input type="file" id="fileInput" accept="' + esc(acceptString()) + '" multiple class="hidden">' +
+      '<div class="breadcrumb" id="breadcrumb"></div>' +
+      '<div id="itens"></div>' +
+    '</section>' +
+  '</div>';
+  renderTrilha(); renderItens();
+  $('#searchInput').addEventListener('input', e => { state.search = e.target.value; renderItens(); });
+}
+function renderTrilha(){
+  const el = $('#breadcrumb'); if(!el) return;
+  let html = '<button class="crumb ' + (!state.currentFolderId ? 'active' : '') + '" data-action="goto" data-id=""><i class="fa-solid fa-house"></i> Início</button>';
+  html += trilha().map(p =>
+    '<i class="fa-solid fa-chevron-right sep"></i><button class="crumb ' + (p.id === state.currentFolderId ? 'active' : '') + '" data-action="goto" data-id="' + p.id + '">' + esc(p.nome) + '</button>'
+  ).join('');
+  el.innerHTML = html;
+}
+function btnBaixar(d, permitido){
+  return permitido
+    ? '<button class="btn-ic" title="Baixar" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i></button>'
+    : '<button class="btn-ic locked" title="Download não permitido pela sua permissão" disabled><i class="fa-solid fa-lock"></i></button>';
+}
+function renderItens(){
+  const el = $('#itens'); if(!el) return;
+  const u = currentUser();
+  const q = state.search.trim().toLowerCase();
+  let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
+  let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
+  if(!state.currentFolderId && !ehAdmin(u)){
+    folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
+    docs = [];
+  } else if(state.currentFolderId){
+    folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
+  }
+  docs = docs.filter(d => formatoVisivel(d, u));
+  if(q){
+    folders = folders.filter(p => p.nome.toLowerCase().includes(q));
+    docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
+  }
+  const perms = permsAtuais();
+  const usuarios = DB.get('Usuarios');
+  const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
+  const mode = state.viewMode || 'detalhes';
+  const grid = ['xg','g','m','p'].includes(mode);
+
+  const acoesPasta = (p, dono) =>
+    (dono ? '<button class="btn-ic" title="Permissões da pasta" data-action="compartilhar" data-id="' + p.id + '"><i class="fa-solid fa-share-nodes"></i></button>' : '') +
+    ((dono || perms.includes('excluir_pasta')) ? '<button class="btn-ic danger" title="Excluir pasta" data-action="excluir-pasta" data-id="' + p.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+  const acoesDoc = (d, pd) =>
+    '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
+    btnBaixar(d, pd.includes('download')) +
+    (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
+    (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+
+  let html = '';
+  if(grid){
+    el.className = 'itens-grid mode-' + mode;
+    html = folders.map(p => {
+      const dono = p.criadaPor === u.id || ehAdmin(u);
+      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      return '<div class="gcard" data-action="open-folder" data-id="' + p.id + '">' +
+        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+        '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + '</span>' +
+        '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</span>' +
+        '<div class="gcard-actions">' + acoesPasta(p, dono) + '</div></div>';
+    }).join('') +
+    docs.map(d => {
+      const ci = catInfo(d); const pd = permsDoc(d);
+      return '<div class="gcard">' +
+        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+        '<span class="gname" title="' + esc(d.titulo) + '">' + esc(d.titulo) + '</span>' +
+        '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') + '</span>' +
+        '<div class="gcard-actions">' + acoesDoc(d, pd) + '</div></div>';
+    }).join('');
+  } else if(mode === 'lista'){
+    el.className = 'itens';
+    html = folders.map(p => {
+      const dono = p.criadaPor === u.id || ehAdmin(u);
+      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      return '<div class="lrow" data-action="open-folder" data-id="' + p.id + '">' +
+        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+        '<span class="gname">' + esc(p.nome) + '</span>' +
+        '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
+    }).join('') +
+    docs.map(d => {
+      const ci = catInfo(d); const pd = permsDoc(d);
+      return '<div class="lrow">' +
+        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+        '<span class="gname">' + esc(d.titulo) + '</span>' +
+        '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
+    }).join('');
+  } else {
+    el.className = 'itens';
+    html = folders.map(p => {
+      const pv = permsEff(u.id, p);
+      const dono = p.criadaPor === u.id || ehAdmin(u);
+      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      return '<div class="item-row" data-action="open-folder" data-id="' + p.id + '">' +
+        '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
+        '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
+        (dono ? '<span class="tag tag-admin">Controle total</span>' : '<span class="tag tag-arq">' + icoPerms(pv) + '</span>') +
+        '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
+    }).join('') +
+    docs.map(d => {
+      const ci = catInfo(d);
+      const pd = permsDoc(d);
+      const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
+      return '<div class="item-row">' +
+        '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
+        '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '') + '</small></div>' +
+        '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
+        '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
+    }).join('');
+  }
+  if(!html) html = '<div class="vazio"><i class="fa-solid fa-folder-open"></i><p>Sem arquivos nesta pasta.</p></div>';
+  el.innerHTML = html;
+}
+
+/* ================= UPLOAD ================= */
+function handleUpload(file){
+  if(!file) return;
+  const ext = (file.name.includes('.') ? file.name.split('.').pop() : 'bin').toLowerCase();
+  const permitidos = formatosPermitidos();
+  if(!permitidos.includes(ext)){
+    toast('Formato .' + ext + ' não permitido. Formatos liberados: ' + permitidos.join(', ') + '.','error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result);
+    const u = currentUser();
+    const idDoc = uid('d');
+    const base = {id:idDoc, pastaId: state.currentFolderId, titulo: file.name.replace(/\.[^.]+$/,''), tipo:'arquivo', ext:ext, mime:file.type||'', criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()};
+    if(salvarDocArquivo(base, dataUrl)){ toast('Arquivo enviado: ' + file.name); renderItens(); }
+  };
+  reader.readAsDataURL(file);
+}
+
+/* ================= MODAIS ================= */
+function modalNovaPasta(){
+  openModal('<h3><i class="fa-solid fa-folder-plus"></i> Nova pasta</h3>' +
+    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b>. Pastas criadas por você são <b>privadas</b> (visíveis só para você e administradores) até que você as compartilhe.</p>' +
+    '<label class="campo">Nome da pasta<input id="mNomePasta" placeholder="Ex.: Contratos 2026"></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-pasta"><i class="fa-solid fa-folder-plus"></i> Criar pasta</button></div>');
+  setTimeout(() => { const i = $('#mNomePasta'); if(i) i.focus(); }, 60);
+}
+function modalDoc(docId){
+  const d = docId ? DB.get('Documentos').find(x => x.id === docId) : null;
+  const isFile = d && d.tipo === 'arquivo';
+  openModal('<h3><i class="fa-solid ' + (isFile ? catInfo(d).ic : 'fa-file-pen') + '"></i> ' + (d ? (isFile ? 'Renomear arquivo' : 'Editar documento') : 'Novo documento') + '</h3>' +
+    '<label class="campo">Título<input id="mTitulo" value="' + (d ? esc(d.titulo) : '') + '" placeholder="Título do documento"></label>' +
+    (isFile
+      ? '<p class="modal-sub"><i class="fa-solid fa-circle-info"></i> Use o botão "caneta" na lista para abrir o editor de DOCX/XLSX. Aqui você apenas renomeia o arquivo.</p>'
+      : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12" placeholder="Escreva aqui o conteúdo do documento...">' + (d ? esc(d.conteudo) : '') + '</textarea></label>') +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+  setTimeout(() => { const i = $('#mTitulo'); if(i) i.focus(); }, 60);
+}
+function modalEditarUsuario(userId){
+  const u = currentUser();
+  const x = DB.get('Usuarios').find(y => y.id === userId); if(!x) return;
+  if(!(ehAdmin(u) || x.id === u.id)){ toast('Sem permissão para editar este usuário.','error'); return; }
+  openModal('<h3><i class="fa-solid fa-user-pen"></i> Editar dados — ' + esc(x.nome) + '</h3>' +
+    '<p class="modal-sub">' + (ehAdmin(u) ? 'Como administrador você pode alterar os dados de qualquer usuário.' : 'Você pode alterar apenas os seus próprios dados.') + '</p>' +
+    '<label class="campo">Nome completo<input id="eNome" value="' + esc(x.nome) + '"></label>' +
+    '<label class="campo">E-mail<input id="eEmail" type="email" value="' + esc(x.email) + '"></label>' +
+    '<label class="campo">Nova senha<input id="eSenha" type="text" placeholder="Deixe em branco para manter a senha atual"></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-dados-usuario" data-id="' + x.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+}
+function noPrev(ci){ return '<div class="no-prev"><i class="fa-solid ' + ci.ic + '"></i>Pré-visualização indisponível para este formato.<br>Use "Baixar" ou "Abrir no Drive".</div>'; }
+function modalVer(docId){
+  const d = DB.get('Documentos').find(x => x.id === docId); if(!d) return;
+  const cat = categoria(d), ci = catInfo(d);
+  const autor = (DB.get('Usuarios').find(x => x.id === d.criadoPor) || {}).nome || '—';
+  const pasta = pastaPorId(d.pastaId);
+  const pd = permsDoc(d);
+  const podeBaixar = pd.includes('download');
+  const podeImprimir = pd.includes('imprimir');
+  const protegido = !(podeBaixar && podeImprimir);
+  const drivePrev = d.driveId ? 'https://drive.google.com/file/d/' + d.driveId + '/preview' : null;
+  let corpo = '';
+  pdfPendente = null; officePendente = null;
+  const placeholderOffice = '<div class="doc-body" id="officePrev"><div class="no-prev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div></div>';
+
+  if(d.tipo === 'texto'){
+    corpo = '<div class="doc-body">' + esc(d.conteudo) + '</div>';
+  } else if(d.arquivo || d.driveId){
+    if(cat === 'pdf'){
+      if(d.arquivo && !protegido){
+        currentBlobUrl = dataURLtoBlobUrl(d.arquivo);
+        corpo = '<iframe class="pdf-frame" src="' + currentBlobUrl + '"></iframe>';
+      } else {
+        corpo = '<div class="pdf-restrito" id="pdfRestrito"><div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div></div>';
+        pdfPendente = {doc: d};
+      }
+    }
+    else if(cat === 'img'){
+      corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><img class="prev-img" src="' + (d.arquivo ? d.arquivo : 'https://lh3.googleusercontent.com/d/' + d.driveId) + '" alt=""></div>';
+    }
+    else if(cat === 'video'){
+      corpo = d.arquivo ? '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><video class="prev-media" controls src="' + d.arquivo + '"></video></div>' : '<iframe class="pdf-frame" src="' + drivePrev + '"></iframe>';
+    }
+    else if(cat === 'audio' && d.arquivo){
+      corpo = '<div style="padding:24px 0"><audio controls style="width:100%" src="' + d.arquivo + '"></audio></div>';
+    }
+    else if(cat === 'txt' && d.arquivo){
+      corpo = '<div class="doc-body">' + esc(dataURLTexto(d.arquivo)) + '</div>';
+    }
+    else if(cat === 'word' || cat === 'sheet'){
+      corpo = placeholderOffice;
+      officePendente = {kind: cat, doc: d};
+    }
+    else corpo = noPrev(ci);
+  } else corpo = noPrev(ci);
+
+  bloqueioAtivo = protegido;
+
+  const acoes =
+    (podeBaixar
+      ? '<button class="btn btn-light" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i> Baixar</button>'
+      : '<button class="btn btn-light" disabled title="Download não permitido"><i class="fa-solid fa-lock"></i> Baixar</button>') +
+    (podeImprimir ? '<button class="btn btn-light" data-action="imprimir-doc" data-id="' + d.id + '"><i class="fa-solid fa-print"></i> Imprimir</button>' : '') +
+    (podeBaixar && d.driveUrl ? '<button class="btn btn-light" data-action="abrir-drive" data-id="' + d.id + '"><i class="fa-brands fa-google-drive"></i> Abrir no Drive</button>' : '') +
+    (pd.includes('editar') ? '<button class="btn btn-light" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i> Editar</button>' : '') +
+    '<button class="btn btn-primary" data-action="fechar-modal">Fechar</button>';
+  openModal('<div class="doc-head"><h3><i class="fa-solid ' + ci.ic + '"></i> ' + esc(d.titulo) + '</h3>' +
+    '<button class="btn-ic" data-action="fechar-modal" title="Fechar"><i class="fa-solid fa-xmark"></i></button></div>' +
+    '<div class="doc-meta"><span><i class="fa-solid fa-user"></i>' + esc(autor) + '</span>' +
+    '<span><i class="fa-solid fa-folder"></i>' + (pasta ? esc(pasta.nome) : 'Raiz') + '</span>' +
+    '<span><i class="fa-solid fa-shield-halved"></i>' + icoPerms(pd) + '</span>' +
+    '<span><i class="fa-solid fa-clock"></i>' + fmtData(d.atualizadoEm || d.criadoEm) + '</span>' +
+    (d.tamanho ? '<span><i class="fa-solid fa-database"></i>' + fmtTam(d.tamanho) + '</span>' : '') + '</div>' +
+    corpo + '<div class="modal-actions">' + acoes + '</div>');
+
+  const cont0 = $('#officePrev');
+  if(officePendente && cont0){
+    const alvo = officePendente;
+    const falha = () => { cont0.innerHTML = '<div class="no-prev" style="background:transparent"><i class="fa-solid ' + ci.ic + '"></i>Não foi possível gerar a pré-visualização.<br>Use "Baixar" para abrir no aplicativo correspondente.</div>'; };
+    obterBuffer(alvo.doc)
+      .then(buf => alvo.kind === 'word' ? renderDocx(buf, cont0) : renderXlsx(buf, cont0))
+      .catch(falha);
+  }
+  if(pdfPendente){
+    const alvo = pdfPendente;
+    const cont = $('#pdfRestrito');
+    const falha = () => { if(cont) cont.innerHTML = '<div class="no-prev" style="width:100%"><i class="fa-solid fa-lock"></i>Visualização protegida indisponível para este arquivo.<br>Solicite permissão de download para acessar o conteúdo.</div>'; };
+    obterBuffer(alvo.doc)
+      .then(buf => renderPdfProtegido(new Uint8Array(buf), cont))
+      .catch(falha);
+  }
+}
+/* ===== PERMISSÕES DA PASTA ===== */
+function atualizarPcount(row){
+  const n = $$('.ptog.on', row).length;
+  const sp = $('.pcount', row);
+  if(sp){ sp.textContent = n ? n + ' permissão' + (n>1?'s':'') : 'Sem acesso'; sp.className = 'pcount tag ' + (n ? 'tag-edit' : 'tag-view'); }
+}
+function aplicarPresetRow(row, nome){
+  const set = presetSet(nome);
+  $$('.ptog', row).forEach(b => b.classList.toggle('on', set.includes(b.dataset.perm)));
+  atualizarPcount(row);
+}
+function modalCompartilhar(pastaId){
+  const p = pastaPorId(pastaId); if(!p) return;
+  const usuarios = DB.get('Usuarios').filter(x => x.papel !== 'master');
+  const perms = DB.get('Permissoes');
+  const rows = usuarios.map(x => {
+    const cur = (perms.find(pp => pp.pastaId === pastaId && pp.userId === x.id) || {}).perms || [];
+    return '<div class="prow" data-user="' + x.id + '" data-nome="' + esc((x.nome + ' ' + x.email).toLowerCase()) + '">' +
+      '<div class="prow-left"><span class="avatar">' + iniciais(x.nome) + '</span>' +
+        '<div class="perm-user"><strong>' + esc(x.nome) + '</strong>' +
+        '<small>' + esc(x.email) + ' • ' + PAPEIS[x.papel] + ' <span class="pcount tag ' + (cur.length ? 'tag-edit' : 'tag-view') + '">' + (cur.length ? cur.length + ' permissões' : 'Sem acesso') + '</span></small></div></div>' +
+      '<select class="select-papel row-preset" title="Aplicar perfil rápido neste usuário">' +
+        '<option value="">Perfil rápido…</option>' +
+        '<option value="leitor">Leitor</option><option value="editor">Editor</option>' +
+        '<option value="completo">Completo</option><option value="limpar">Limpar</option></select>' +
+      '<div class="ptogs">' + PERMS_LIST.map(pm =>
+        '<button type="button" class="ptog' + (cur.includes(pm.k) ? ' on' : '') + '" data-action="toggle-perm" data-perm="' + pm.k + '" title="' + pm.label + '"><i class="fa-solid ' + pm.ic + '"></i></button>'
+      ).join('') + '</div></div>';
+  }).join('');
+  openModal('<h3><i class="fa-solid fa-share-nodes"></i> Permissões da pasta</h3>' +
+    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — clique nos ícones para ligar/desligar cada permissão (subpastas herdam). Usuários sem "download + imprimir" abrem PDFs em visualização protegida.</p>' +
+    '<div class="perm-topbar">' +
+      '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="permBusca" placeholder="Buscar usuário por nome ou e-mail..."></div>' +
+      '<div class="perm-bulk">' +
+        '<button data-action="bulk-preset" data-preset="leitor" title="Aplicar perfil Leitor a todos">Todos: Leitor</button>' +
+        '<button data-action="bulk-preset" data-preset="editor" title="Aplicar perfil Editor a todos">Todos: Editor</button>' +
+        '<button data-action="bulk-preset" data-preset="limpar" title="Remover todas as permissões">Limpar todos</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="perm-scroll" id="permRows">' + rows + '</div>' +
+    '<div class="perm-legenda">' + PERMS_LIST.map(pm => '<span><i class="fa-solid ' + pm.ic + '"></i>' + pm.label + '</span>').join('') + '</div>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-permissoes" data-id="' + pastaId + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+  $('#permBusca').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    $$('#permRows .prow').forEach(r => { r.style.display = (!q || r.dataset.nome.includes(q)) ? '' : 'none'; });
+  });
+}
+function modalPermsUser(userId){
+  const x = DB.get('Usuarios').find(y => y.id === userId); if(!x) return;
+  openModal('<h3><i class="fa-solid fa-user-shield"></i> Permissões globais — ' + esc(x.nome) + '</h3>' +
+    '<p class="modal-sub">Definem o <b>teto</b> do que o usuário pode fazer em qualquer pasta (o acesso a cada pasta é concedido em "Compartilhar").</p>' +
+    '<div class="preset-row"><button data-action="preset-perms" data-preset="visualizador">Perfil Leitor</button>' +
+    '<button data-action="preset-perms" data-preset="editor">Perfil Editor</button>' +
+    '<button data-action="preset-perms" data-preset="completo">Tudo liberado</button></div>' +
+    permsCheckboxes(x.perms || []) +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-perms-user" data-id="' + x.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
+}
+
+/* ================= CONFIGURAÇÕES ================= */
+function cfgCampo(id, label, valor){
+  return '<label class="campo">' + label + '<input id="' + id + '" value="' + esc(valor||'') + '"></label>';
+}
+function renderConfig(){
+  const e = getEmpresa();
+  const fmtAtuais = Array.isArray(e.formats) && e.formats.length ? e.formats : DEFAULT_FORMATS;
+  cfgLogo = e.logo || LOGO_PADRAO;
+  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Configurações</h1>' +
+  '<div class="grid-2">' +
+    '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-building"></i> Dados cadastrais da empresa</h2></div>' +
+      '<div class="cfg-body">' +
+        '<div class="cfg-cols">' +
+          cfgCampo('cfgNome','Nome oficial / Razão social', e.nome) +
+          cfgCampo('cfgFantasia','Nome fantasia', e.fantasia) +
+          cfgCampo('cfgCnpj','CNPJ', e.cnpj) +
+          cfgCampo('cfgResp','Responsável técnico', e.responsavel) +
+        '</div>' +
+        cfgCampo('cfgEnd','Endereço', e.endereco) +
+        '<div class="cfg-cols">' +
+          cfgCampo('cfgCidade','Cidade / UF', e.cidade) +
+          cfgCampo('cfgCep','CEP', e.cep) +
+          cfgCampo('cfgTel','Telefone', e.telefone) +
+          cfgCampo('cfgEmail','E-mail institucional', e.email) +
+          cfgCampo('cfgSite','Site', e.site) +
+        '</div>' +
+      '</div>' +
+    '</section>' +
+    '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-image"></i> Logotipo da empresa</h2></div>' +
+      '<div class="cfg-body">' +
+        '<div class="logo-prev-wrap"><img id="cfgLogoPrev" src="' + esc(cfgLogo) + '" alt="Logotipo"></div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">' +
+          '<button class="btn btn-light" data-action="trocar-logo"><i class="fa-solid fa-upload"></i> Enviar logotipo</button>' +
+          '<button class="btn btn-light" data-action="reset-logo"><i class="fa-solid fa-rotate-left"></i> Restaurar padrão</button></div>' +
+        '<input type="file" id="logoInput" accept="image/png,image/jpeg,image/svg+xml,image/webp" class="hidden">' +
+        '<p class="modal-sub" style="margin:12px 0 0">PNG, JPG, SVG ou WEBP até ~300 KB. O logotipo aparece na tela de login, no topo do sistema e no cabeçalho das impressões. Clique em "Salvar alterações" para aplicar.</p>' +
+      '</div>' +
+    '</section>' +
+  '</div>' +
+  '<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-solid fa-file-circle-check"></i> Formatos de upload permitidos</h2>' +
+    '<div style="display:flex;gap:8px"><button class="btn btn-light" data-action="fmt-all" style="padding:7px 12px;font-size:12px">Marcar todos</button>' +
+    '<button class="btn btn-light" data-action="fmt-none" style="padding:7px 12px;font-size:12px">Limpar</button></div></div>' +
+    '<div class="cfg-body">' +
+      '<p class="modal-sub">Selecione as extensões liberadas para <b>envio</b> e <b>visualização</b>: usuários não administradores só veem arquivos dos formatos marcados aqui (administradores veem tudo). O filtro de upload é aplicado no momento do envio.</p>' +
+      '<div class="fmt-grid">' + DEFAULT_FORMATS.map(f =>
+        '<label class="chk"><input type="checkbox" data-fmt="' + f + '"' + (fmtAtuais.includes(f) ? ' checked' : '') + '><i class="fa-solid fa-file"></i> .' + f + '</label>'
+      ).join('') + '</div>' +
+      '<button class="btn btn-primary" data-action="salvar-config"><i class="fa-solid fa-floppy-disk"></i> Salvar alterações</button>' +
+    '</div>' +
+  '</section></div>';
+}
+
+/* ================= GERENCIAR USUÁRIOS ================= */
+function renderUsuarios(){
+  const u = currentUser();
+  const isAdmin = ehAdmin(u);
+  const usuarios = isAdmin ? DB.get('Usuarios') : [u];
+  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Gerenciar Usuários</h1>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-users"></i> ' + (isAdmin ? 'Usuários do sistema' : 'Meus dados') + '</h2>' +
+  (isAdmin ? '<button class="btn btn-primary" data-action="novo-usuario"><i class="fa-solid fa-user-plus"></i> Novo Usuário</button>' : '') + '</div>' +
+  (!isAdmin ? '<p class="sobre-texto" style="padding:12px 22px 0">Você pode alterar <b>apenas os seus próprios dados</b> (nome, e-mail e senha). Papel e permissões são gerenciados pelo administrador.</p>' : '') +
+  '<div class="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Papel</th><th>Permissões</th><th>Criado em</th><th class="tr-right">Ações</th></tr></thead><tbody>' +
+  usuarios.map(x => {
+    const selectPapel = (isAdmin && x.papel !== 'master' && x.id !== u.id)
+      ? '<select class="select-papel" data-user="' + x.id + '">' + ['admin','editor','visualizador'].map(p =>
+          '<option value="' + p + '"' + (x.papel === p ? ' selected' : '') + '>' + PAPEIS[p] + '</option>').join('') + '</select>'
+      : '<span class="tag ' + (x.papel === 'master' ? 'tag-admin' : 'tag-view') + '">' + PAPEIS[x.papel] + '</span>';
+    return '<tr>' +
+      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + '</strong></div></td>' +
+      '<td>' + esc(x.email) + '</td>' +
+      '<td>' + selectPapel + '</td>' +
+      '<td>' + (x.papel === 'master' ? '<span class="tag tag-admin">Todas</span>' : icoPerms(x.perms || [])) + '</td>' +
+      '<td><small>' + fmtData(x.criadoEm) + '</small></td>' +
+      '<td class="tr-right">' +
+        '<button class="btn-ic" title="' + (x.id === u.id ? 'Editar meus dados' : 'Editar dados') + '" data-action="editar-usuario" data-id="' + x.id + '"><i class="fa-solid fa-user-pen"></i></button> ' +
+        (isAdmin && x.papel !== 'master' ? '<button class="btn-ic" title="Editar permissões" data-action="perms-user" data-id="' + x.id + '"><i class="fa-solid fa-user-shield"></i></button> ' : '') +
+        (u.papel === 'master' && x.papel !== 'master' ? '<button class="btn-ic danger" title="Excluir usuário" data-action="excluir-usuario" data-id="' + x.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '') +
+      '</td></tr>';
+  }).join('') +
+  '</tbody></table></div></section></div>';
+}
+function modalNovoUsuario(){
+  openModal('<h3><i class="fa-solid fa-user-plus"></i> Novo usuário</h3>' +
+    '<label class="campo">Nome completo<input id="mNomeUser" placeholder="Ex.: Maria Silva"></label>' +
+    '<label class="campo">E-mail<input id="mEmailUser" type="email" placeholder="maria.silva@rio.gov.br"></label>' +
+    '<label class="campo">Senha<input id="mSenhaUser" type="text" placeholder="mínimo 6 caracteres"></label>' +
+    '<label class="campo">Papel<select id="mPapelUser"><option value="editor">Editor</option><option value="visualizador">Leitor</option><option value="admin">Administrador</option></select></label>' +
+    '<p class="modal-sub" style="margin-bottom:2px"><i class="fa-solid fa-shield-halved"></i> Permissões do usuário (ajuste à vontade):</p>' +
+    permsCheckboxes(PRESETS.editor) +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="salvar-usuario"><i class="fa-solid fa-floppy-disk"></i> Criar usuário</button></div>');
+}
+function renderPerfil(){
+  const u = currentUser();
+  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Meu Perfil</h1>' +
+  '<div class="grid-2">' +
+    '<section class="card"><div class="perfil-top"><span class="avatar-lg">' + iniciais(u.nome) + '</span>' +
+      '<div><div class="perfil-nome">' + esc(u.nome) + '</div><small style="color:var(--muted)">' + esc(u.email) + '</small><br>' +
+      '<span class="tag tag-admin" style="margin-top:8px;display:inline-block">' + PAPEIS[u.papel] + '</span></div></div>' +
+      '<div class="sobre-texto" style="padding-top:0"><i class="fa-solid fa-shield-halved" style="color:var(--primary)"></i> Minhas permissões globais: ' +
+      (ehAdmin(u) ? '<span class="tag tag-admin">Todas</span>' : icoPerms(u.perms || [])) +
+      '<br><small style="color:var(--muted)">O acesso a cada pasta é definido pelo administrador em "Compartilhar". Pastas que você cria são privadas até serem compartilhadas.</small></div>' +
+    '</section>' +
+    '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-key"></i> Alterar senha</h2></div>' +
+      '<div style="padding:18px 22px">' +
+      '<label class="campo">Senha atual<input id="senhaAtual" type="password"></label>' +
+      '<label class="campo">Nova senha<input id="senhaNova" type="password"></label>' +
+      '<label class="campo">Confirmar nova senha<input id="senhaConf" type="password"></label>' +
+      '<button class="btn btn-primary" data-action="salvar-senha"><i class="fa-solid fa-floppy-disk"></i> Salvar senha</button>' +
+      '</div>' +
+    '</section>' +
+  '</div></div>';
+}
+const SCRIPT_GAS =
+'=====================================================\n' +
+' GOOGLE APPS SCRIPT - Code.gs\n' +
+' Backend: Google Sheets (dados) + Google Drive (arquivos)\n' +
+' 1) Crie uma Google Sheet vazia\n' +
+' 2) Extensões > Apps Script e cole este código\n' +
+' 3) Implantar > Nova implantação > Aplicativo da Web\n' +
+'    - Executar como: eu mesmo\n' +
+'    - Quem tem acesso: qualquer pessoa\n' +
+' 4) Autorize Drive + Planilhas ao implantar\n' +
+' 5) Copie a URL /exec e cole em "Sobre > Integração"\n' +
+'=====================================================\n\n' +
+'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
+'function folha_(nome){\n' +
+'  var ss = SpreadsheetApp.getActiveSpreadsheet();\n' +
+'  var sh = ss.getSheetByName(nome);\n' +
+'  if (!sh) sh = ss.insertSheet(nome);\n' +
+'  return sh;\n' +
+'}\n\n' +
+'function pastaDrive_(){\n' +
+'  var props = PropertiesService.getScriptProperties();\n' +
+'  var id = props.getProperty("DRIVE_FOLDER");\n' +
+'  var folder = null;\n' +
+'  try { folder = id ? DriveApp.getFolderById(id) : null; } catch(e){}\n' +
+'  if (!folder){\n' +
+'    var it = DriveApp.getFoldersByName("SGD_Arquivos");\n' +
+'    folder = it.hasNext() ? it.next() : DriveApp.createFolder("SGD_Arquivos");\n' +
+'    props.setProperty("DRIVE_FOLDER", folder.getId());\n' +
+'  }\n' +
+'  return folder;\n' +
+'}\n\n' +
+'function anexarDrive_(r){\n' +
+'  if (r.arquivo && String(r.arquivo).indexOf("data:") === 0 && !r.driveId){\n' +
+'    try {\n' +
+'      var parts = String(r.arquivo).split(",");\n' +
+'      var m = parts[0].match(/data:(.*?);base64/);\n' +
+'      var mime = m ? m[1] : "application/octet-stream";\n' +
+'      var bytes = Utilities.base64Decode(parts[1]);\n' +
+'      var nome = (r.titulo || "arquivo") + "." + (r.ext || "bin");\n' +
+'      var file = pastaDrive_().createFile(Utilities.newBlob(bytes, mime, nome));\n' +
+'      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
+'      r.driveId = file.getId();\n' +
+'      r.driveUrl = file.getUrl();\n' +
+'    } catch(e) {}\n' +
+'    r.arquivo = "";\n' +
+'  }\n' +
+'  return r;\n' +
+'}\n\n' +
+'function doGet(){\n' +
+'  var out = {};\n' +
+'  FOLHAS.forEach(function(f){\n' +
+'    var sh = folha_(f);\n' +
+'    var last = Math.max(sh.getLastRow(), 1);\n' +
+'    var vals = sh.getRange(1,1,last,1).getValues();\n' +
+'    out[f] = vals.map(function(r){\n' +
+'      try { return JSON.parse(r[0]); } catch(e){ return null; }\n' +
+'    }).filter(function(x){ return !!x; });\n' +
+'  });\n' +
+'  return ContentService.createTextOutput(JSON.stringify(out))\n' +
+'    .setMimeType(ContentService.MimeType.JSON);\n' +
+'}\n\n' +
+'function doPost(e){\n' +
+'  var lock = LockService.getScriptLock();\n' +
+'  lock.waitLock(30000);\n' +
+'  try {\n' +
+'    var body = JSON.parse(e.postData.contents);\n' +
+'    var rows = body.rows || [];\n' +
+'    if (body.folha === "Documentos") rows = rows.map(anexarDrive_);\n' +
+'    var sh = folha_(body.folha);\n' +
+'    sh.clearContents();\n' +
+'    if (rows.length){\n' +
+'      var values = rows.map(function(r){ return [JSON.stringify(r)]; });\n' +
+'      sh.getRange(1,1,values.length,1).setValues(values);\n' +
+'    }\n' +
+'    return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  } finally {\n' +
+'    lock.releaseLock();\n' +
+'  }\n' +
+'}\n';
+function renderSobre(){
+  const url = Sync.url();
+  const e = getEmpresa();
+  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Sobre</h1>' +
+  '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-building"></i> ' + esc(e.fantasia) + '</h2></div>' +
+    '<div class="sobre-texto"><div class="empresa-resumo">' +
+      '<span><i class="fa-solid fa-signature"></i>' + esc(e.nome) + ' • CNPJ ' + esc(e.cnpj) + '</span>' +
+      '<span><i class="fa-solid fa-location-dot"></i>' + esc(e.endereco) + ' - ' + esc(e.cidade) + ' • CEP ' + esc(e.cep) + '</span>' +
+      '<span><i class="fa-solid fa-phone"></i>' + esc(e.telefone) + ' • <i class="fa-solid fa-envelope"></i>' + esc(e.email) + ' • <i class="fa-solid fa-globe"></i>' + esc(e.site) + '</span>' +
+      '<span><i class="fa-solid fa-file-circle-check"></i>Uploads permitidos: .' + esc((e.formats || DEFAULT_FORMATS).join(', .')) + '</span>' +
+    '</div></div>' +
+  '</section>' +
+  '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b> (alternável na sessão), <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera do celular</b>. Os formatos liberados nas Configurações controlam o que cada usuário vê e envia.</p>' +
+  '</section>' +
+  '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
+    '<p class="sobre-texto">Sem URL configurada o app opera em <b>modo demonstração</b> (arquivos de até ~1,2 MB no navegador). Com a URL do Apps Script configurada, arquivos de até <b>25 MB</b> são enviados ao Google Drive e os links ficam na planilha.</p>' +
+    '<div class="integ-row"><input id="urlGas" placeholder="https://script.google.com/macros/s/XXXX/exec" value="' + esc(url) + '">' +
+    '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
+    '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Baixar do Sheets</button></div>' +
+  '</section>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive)</h2>' +
+    '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
+    '<pre class="code" id="gasCode"></pre>' +
+  '</section></div>';
+  $('#gasCode').textContent = SCRIPT_GAS;
+  atualizarBadge();
+}
+
+/* ================= EVENTOS ================= */
+document.addEventListener('click', e => {
+  const pop = $('.viewmenu-pop.open');
+  if(pop && !e.target.closest('.viewmenu')) pop.classList.remove('open');
+  const el = e.target.closest('[data-action]');
+  if(!el) return;
+  const a = el.dataset.action;
+  const id = el.dataset.id || null;
+  const u = currentUser();
+
+  if(a === 'preencher'){ $('#loginEmail').value = el.dataset.email; $('#loginSenha').value = el.dataset.senha; return; }
+  if(!u) return;
+
+  switch(a){
+    case 'logout':
+      session = null; localStorage.removeItem('rio_session'); mostrarLogin(); break;
+    case 'nav':
+      state.view = el.dataset.view; state.search = ''; $('#sidebar').classList.remove('open'); renderApp(); break;
+    case 'menu-view': {
+      const p = $('#viewPop'); if(p) p.classList.toggle('open');
+      break;
+    }
+    case 'set-view':
+      state.viewMode = el.dataset.mode; /* padrão da sessão: detalhes; alterável pelo menu Visualizar */
+      renderDashboard();
+      break;
+    case 'open-folder':
+      state.currentFolderId = id; state.search = ''; renderDashboard(); break;
+    case 'goto':
+      state.currentFolderId = id || null; state.search = ''; renderDashboard(); break;
+    case 'voltar': {
+      const p = pastaPorId(state.currentFolderId);
+      state.currentFolderId = p ? (p.parentId || null) : null;
+      state.search = ''; renderDashboard(); break;
+    }
+    case 'nova-pasta': modalNovaPasta(); break;
+    case 'novo-doc': modalDoc(null); break;
+    case 'enviar-arquivo': { const inp = $('#fileInput'); if(inp) inp.click(); break; }
+    case 'abrir-camera': modalCamera(); break;
+    case 'cam-add': { const inp = $('#camInput'); if(inp) inp.click(); break; }
+    case 'cam-gallery': { const inp = $('#camGallery'); if(inp) inp.click(); break; }
+    case 'cam-remove':
+      camPages.splice(Number(el.dataset.idx), 1);
+      renderCamPages();
+      break;
+    case 'cam-save-pdf': {
+      if(!camPages.length){ toast('Capture ao menos uma página.','error'); break; }
+      toast('Gerando PDF…','info');
+      const dataUrl = paginasParaPDF(camPages);
+      const now = new Date();
+      const base = {id: uid('d'), pastaId: state.currentFolderId, titulo: 'Digitalização ' + now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), tipo:'arquivo', ext:'pdf', mime:'application/pdf', criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()};
+      if(salvarDocArquivo(base, dataUrl)){ fecharModal(); toast('PDF salvo na pasta com sucesso.'); renderItens(); }
+      break;
+    }
+    case 'cam-save-imgs': {
+      if(!camPages.length){ toast('Capture ao menos uma página.','error'); break; }
+      let ok = 0;
+      camPages.forEach((p, i) => {
+        const base = {id: uid('d'), pastaId: state.currentFolderId, titulo: 'Digitalização pág. ' + (i+1) + ' ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), tipo:'arquivo', ext:'jpg', mime:'image/jpeg', criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()};
+        if(salvarDocArquivo(base, p)) ok++;
+      });
+      if(ok){ fecharModal(); toast(ok + ' imagem(ns) salva(s) na pasta.'); renderItens(); }
+      break;
+    }
+    case 'ver-doc': modalVer(id); break;
+    case 'editar-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      const cat = categoria(d);
+      if(d.tipo === 'arquivo' && cat === 'word' && window.mammoth && (d.arquivo || d.driveId)) abrirEditorWord(d);
+      else if(d.tipo === 'arquivo' && cat === 'sheet' && window.XLSX && (d.arquivo || d.driveId)) abrirEditorSheet(d);
+      else modalDoc(id);
+      break;
+    }
+    case 'w-cmd': {
+      const ed = $('#wEditor'); if(ed) ed.focus();
+      try{ document.execCommand(el.dataset.cmd, false, el.dataset.val || null); }catch(err){}
+      break;
+    }
+    case 's-tab':
+      syncActiveFromDOM();
+      sheetState.active = Number(el.dataset.idx);
+      renderSheetEditor();
+      break;
+    case 's-addrow':
+      syncActiveFromDOM();
+      sheetState.sheets[sheetState.active].aoa.push(Array(sheetCols()).fill(''));
+      renderSheetEditor();
+      break;
+    case 's-delrow':
+      syncActiveFromDOM(); {
+        const s = sheetState.sheets[sheetState.active];
+        if(s.aoa.length > 1) s.aoa.pop();
+      }
+      renderSheetEditor();
+      break;
+    case 's-addcol':
+      syncActiveFromDOM();
+      sheetState.sheets[sheetState.active].aoa.forEach(r => r.push(''));
+      renderSheetEditor();
+      break;
+    case 's-delcol':
+      syncActiveFromDOM(); {
+        const s = sheetState.sheets[sheetState.active];
+        const cols = s.aoa.reduce((m, r) => Math.max(m, r.length), 1);
+        if(cols > 1) s.aoa.forEach(r => r.pop());
+      }
+      renderSheetEditor();
+      break;
+    case 's-addsheet':
+      syncActiveFromDOM();
+      sheetState.sheets.push({name: 'Planilha' + (sheetState.sheets.length + 1), aoa: Array.from({length: 12}, () => Array(6).fill(''))});
+      sheetState.active = sheetState.sheets.length - 1;
+      renderSheetEditor();
+      break;
+    case 'salvar-word': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      const titulo = ($('#wTitulo') || {}).value.trim() || d.titulo;
+      const ed = $('#wEditor'); if(!ed) break;
+      if(!window.htmlDocx){ toast('Biblioteca html-docx indisponível.','error'); break; }
+      const htmlFull = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(titulo) + '</title></head><body>' + ed.innerHTML + '</body></html>';
+      const blob = window.htmlDocx.asBlob(htmlFull);
+      blobToDataURL(blob).then(url => {
+        if(salvarArquivoBin(d, url, titulo)){ fecharModal(); toast('DOCX salvo com sucesso.'); renderItens(); }
+      }).catch(() => toast('Falha ao gerar o DOCX.','error'));
+      break;
+    }
+    case 'salvar-sheet': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      const titulo = ($('#sTitulo') || {}).value.trim() || d.titulo;
+      if(!window.XLSX || !sheetState){ toast('Editor não inicializado.','error'); break; }
+      syncActiveFromDOM();
+      const wb = window.XLSX.utils.book_new();
+      sheetState.sheets.forEach((s, i) => {
+        window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(s.aoa), String(s.name || ('Planilha' + (i+1))).slice(0, 31));
+      });
+      const b64 = window.XLSX.write(wb, {bookType:'xlsx', type:'base64'});
+      const url = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + b64;
+      if(salvarArquivoBin(d, url, titulo)){ fecharModal(); toast('XLSX salvo com sucesso.'); renderItens(); }
+      break;
+    }
+    case 'editar-usuario': modalEditarUsuario(id); break;
+    case 'salvar-dados-usuario': {
+      const x = DB.get('Usuarios').find(y => y.id === id); if(!x) break;
+      if(!(ehAdmin(u) || x.id === u.id)){ toast('Sem permissão para editar este usuário.','error'); break; }
+      const nome = $('#eNome').value.trim();
+      const email = $('#eEmail').value.trim().toLowerCase();
+      const senha = $('#eSenha').value;
+      if(!nome){ toast('Informe o nome.','error'); break; }
+      if(!email.includes('@')){ toast('Informe um e-mail válido.','error'); break; }
+      if(DB.get('Usuarios').some(y => y.id !== x.id && y.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); break; }
+      if(senha && senha.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); break; }
+      DB.set('Usuarios', DB.get('Usuarios').map(y => y.id === x.id ? Object.assign({}, y, {
+        nome: nome, email: email, senha: senha ? senha : y.senha
+      }) : y));
+      fecharModal();
+      toast('Dados do usuário atualizados.');
+      if(x.id === u.id) renderApp(); else renderUsuarios();
+      break;
+    }
+    case 'imprimir-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      if(!permsDoc(d).includes('imprimir')){ toast('Sem permissão de impressão para este arquivo.','error'); break; }
+      imprimirDoc(d); break;
+    }
+    case 'baixar-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      if(!permsDoc(d).includes('download')){ toast('Sem permissão de download para este arquivo. Solicite acesso ao administrador.','error'); break; }
+      baixarArquivo(d); toast('Download iniciado.','info'); break;
+    }
+    case 'abrir-drive': {
+      const d = DB.get('Documentos').find(x => x.id === id);
+      if(d && d.driveUrl && permsDoc(d).includes('download')) window.open(d.driveUrl, '_blank');
+      else toast('Sem permissão de download para este arquivo.','error');
+      break;
+    }
+    case 'toggle-perm':
+      el.classList.toggle('on');
+      atualizarPcount(el.closest('.prow'));
+      break;
+    case 'bulk-preset':
+      $$('#modalCard .prow').forEach(row => aplicarPresetRow(row, el.dataset.preset));
+      toast('Perfil aplicado a todos os usuários listados.','info');
+      break;
+    case 'excluir-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id);
+      if(!permsDoc(d).includes('excluir')){ toast('Sem permissão de exclusão.','error'); break; }
+      modalConfirm('Excluir arquivo', 'Excluir definitivamente <b>' + esc(d ? d.titulo : '') + '</b>? A ação será sincronizada com Sheets/Drive.', () => {
+        DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== id));
+        delete pendingArquivos[id];
+        toast('Arquivo excluído.'); renderItens();
+      }); break;
+    }
+    case 'excluir-pasta': {
+      const p = pastaPorId(id);
+      const perms = permsAtuais();
+      const dono = p && (p.criadaPor === u.id || ehAdmin(u));
+      if(!dono && !perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
+      modalConfirm('Excluir pasta', 'Excluir a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos?', () => {
+        excluirPastaRec(id);
+        if(state.currentFolderId === id) state.currentFolderId = null;
+        toast('Pasta excluída.'); renderDashboard();
+      }); break;
+    }
+    case 'compartilhar': modalCompartilhar(id); break;
+    case 'perms-user':
+      if(ehAdmin(u)) modalPermsUser(id);
+      else toast('Apenas administradores podem editar permissões.','error');
+      break;
+    case 'preset-perms': {
+      const set = presetSet(el.dataset.preset);
+      $$('#modalCard input[data-perm]').forEach(cb => { cb.checked = set.includes(cb.dataset.perm); });
+      break;
+    }
+    case 'salvar-perms-user': {
+      if(!ehAdmin(u)){ toast('Apenas administradores podem editar permissões.','error'); break; }
+      const perms = lerCheckboxes($('#modalCard'));
+      DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === id ? Object.assign({}, x, {perms:perms}) : x));
+      fecharModal(); toast('Permissões globais atualizadas.'); renderUsuarios(); break;
+    }
+    case 'trocar-logo': { const inp = $('#logoInput'); if(inp) inp.click(); break; }
+    case 'reset-logo':
+      cfgLogo = LOGO_PADRAO;
+      const pv1 = $('#cfgLogoPrev'); if(pv1) pv1.src = cfgLogo;
+      toast('Logotipo padrão restaurado — clique em Salvar alterações.','info');
+      break;
+    case 'fmt-all':
+      $$('#viewRoot input[data-fmt]').forEach(cb => cb.checked = true);
+      break;
+    case 'fmt-none':
+      $$('#viewRoot input[data-fmt]').forEach(cb => cb.checked = false);
+      break;
+    case 'salvar-config': {
+      if(!ehAdmin(u)){ toast('Apenas administradores podem alterar as configurações.','error'); break; }
+      const formats = $$('#viewRoot input[data-fmt]:checked').map(i => i.dataset.fmt);
+      if(!formats.length){ toast('Selecione ao menos um formato de upload.','error'); break; }
+      const obj = Object.assign({}, getEmpresa(), {
+        nome: $('#cfgNome').value.trim() || EMPRESA_PADRAO.nome,
+        fantasia: $('#cfgFantasia').value.trim(),
+        cnpj: $('#cfgCnpj').value.trim(),
+        responsavel: $('#cfgResp').value.trim(),
+        endereco: $('#cfgEnd').value.trim(),
+        cidade: $('#cfgCidade').value.trim(),
+        cep: $('#cfgCep').value.trim(),
+        telefone: $('#cfgTel').value.trim(),
+        email: $('#cfgEmail').value.trim(),
+        site: $('#cfgSite').value.trim(),
+        logo: cfgLogo || LOGO_PADRAO,
+        formats: formats
+      });
+      try{ setEmpresa(obj); }catch(err){ toast('Logotipo muito grande para o armazenamento local.','error'); break; }
+      toast('Configurações salvas com sucesso!');
+      renderApp();
+      break;
+    }
+    case 'fechar-modal': fecharModal(); break;
+    case 'confirmar-pendente': fecharModal(); if(acaoPendente){ const f = acaoPendente; acaoPendente = null; f(); } break;
+    case 'salvar-pasta': {
+      const nome = ($('#mNomePasta') || {}).value;
+      if(!nome || !nome.trim()){ toast('Informe o nome da pasta.','error'); return; }
+      const pastas = DB.get('Pastas');
+      pastas.push({id: uid('f'), nome: nome.trim(), parentId: state.currentFolderId, criadaPor: u.id, criadaEm: Date.now()});
+      DB.set('Pastas', pastas); fecharModal(); toast('Pasta privada criada — compartilhe para liberar acesso.'); renderDashboard(); break;
+    }
+    case 'salvar-doc': {
+      const titulo = ($('#mTitulo') || {}).value.trim();
+      if(!titulo){ toast('Informe um título para o documento.','error'); return; }
+      const docs = DB.get('Documentos');
+      if(id){
+        const ex = docs.find(x => x.id === id);
+        if(ex && ex.tipo === 'arquivo'){
+          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, atualizadoEm:Date.now()}) : x));
+          toast('Arquivo renomeado.');
+        } else {
+          const conteudo = ($('#mConteudo') || {}).value;
+          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, conteudo:conteudo, atualizadoEm:Date.now()}) : x));
+          toast('Documento atualizado.');
+        }
+      } else {
+        const conteudo = ($('#mConteudo') || {}).value;
+        docs.push({id: uid('d'), pastaId: state.currentFolderId, titulo:titulo, tipo:'texto', conteudo:conteudo, criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()});
+        DB.set('Documentos', docs);
+        toast('Documento gravado com sucesso.');
+      }
+      fecharModal(); renderItens(); break;
+    }
+    case 'salvar-permissoes': {
+      let perms = DB.get('Permissoes');
+      $$('#modalCard .prow').forEach(row => {
+        const userId = row.dataset.user;
+        const conjunto = $$('.ptog.on', row).map(b => b.dataset.perm);
+        perms = perms.filter(pp => !(pp.pastaId === id && pp.userId === userId));
+        if(conjunto.length) perms.push({id: uid('p'), pastaId: id, userId: userId, perms: conjunto});
+      });
+      DB.set('Permissoes', perms); fecharModal(); toast('Permissões da pasta atualizadas.'); renderDashboard(); break;
+    }
+    case 'novo-usuario':
+      if(ehAdmin(u)) modalNovoUsuario();
+      else toast('Apenas administradores podem criar usuários.','error');
+      break;
+    case 'salvar-usuario': {
+      if(!ehAdmin(u)){ toast('Apenas administradores podem criar usuários.','error'); break; }
+      const nome = $('#mNomeUser').value.trim(), email = $('#mEmailUser').value.trim().toLowerCase(),
+            senha = $('#mSenhaUser').value, papel = $('#mPapelUser').value;
+      if(!nome || !email.includes('@')){ toast('Informe nome e e-mail válidos.','error'); return; }
+      if(senha.length < 6){ toast('A senha deve ter ao menos 6 caracteres.','error'); return; }
+      if(DB.get('Usuarios').some(x => x.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); return; }
+      const perms = lerCheckboxes($('#modalCard'));
+      const usuarios = DB.get('Usuarios');
+      usuarios.push({id: uid('u'), nome:nome, email:email, senha:senha, papel:papel, perms:perms, criadoEm:Date.now()});
+      DB.set('Usuarios', usuarios); fecharModal(); toast('Usuário criado.'); renderUsuarios(); break;
+    }
+    case 'excluir-usuario': {
+      if(u.papel !== 'master'){ toast('Apenas o Master Admin pode excluir usuários.','error'); break; }
+      const x = DB.get('Usuarios').find(y => y.id === id);
+      modalConfirm('Excluir usuário', 'Remover o usuário <b>' + esc(x ? x.nome : '') + '</b> e suas permissões de pasta?', () => {
+        DB.set('Usuarios', DB.get('Usuarios').filter(y => y.id !== id));
+        DB.set('Permissoes', DB.get('Permissoes').filter(p => p.userId !== id));
+        toast('Usuário excluído.'); renderUsuarios();
+      }); break;
+    }
+    case 'salvar-senha': {
+      const atual = $('#senhaAtual').value, nova = $('#senhaNova').value, conf = $('#senhaConf').value;
+      if(atual !== u.senha){ toast('Senha atual incorreta.','error'); return; }
+      if(nova.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); return; }
+      if(nova !== conf){ toast('A confirmação não confere.','error'); return; }
+      DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === u.id ? Object.assign({}, x, {senha:nova}) : x));
+      ['senhaAtual','senhaNova','senhaConf'].forEach(i => $('#'+i).value = '');
+      toast('Senha alterada com sucesso.'); break;
+    }
+    case 'copiar-script':
+      navigator.clipboard.writeText(SCRIPT_GAS).then(() => toast('Código Apps Script copiado!','info')); break;
+    case 'salvar-url':
+      Sync.setUrl(($('#urlGas').value || '').trim());
+      toast(Sync.url() ? 'URL salva — sincronização Sheets/Drive ativa.' : 'URL removida — modo demonstração.','info');
+      atualizarBadge(); break;
+    case 'testar-sync':
+      toast('Baixando dados do Google Sheets...','info');
+      Sync.pull()
+        .then(() => { toast('Dados sincronizados do Sheets!'); aplicarMarca(); renderView(); })
+        .catch(() => toast('Falha ao conectar no Apps Script. Verifique a URL.','error'));
+      break;
+  }
+});
+
+document.addEventListener('change', e => {
+  if(e.target.id === 'fileInput'){
+    Array.from(e.target.files).forEach(handleUpload);
+    e.target.value = '';
+    return;
+  }
+  if(e.target.id === 'camInput' || e.target.id === 'camGallery'){
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if(!files.length) return;
+    toast('Processando imagem(ns)…','info');
+    Promise.all(files.map(f => fileToJpegDataUrl(f))).then(pages => {
+      camPages = camPages.concat(pages);
+      renderCamPages();
+      toast(pages.length + ' página(s) adicionada(s).');
+    }).catch(() => toast('Não foi possível processar a imagem.','error'));
+    return;
+  }
+  if(e.target.id === 'logoInput'){
+    const f = e.target.files[0]; e.target.value = '';
+    if(!f) return;
+    if(!/^image\//.test(f.type)){ toast('Selecione um arquivo de imagem.','error'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      if(dataUrl.length > 400000){ toast('Imagem muito grande (máx. ~300 KB).','error'); return; }
+      cfgLogo = dataUrl;
+      const pv = $('#cfgLogoPrev'); if(pv) pv.src = cfgLogo;
+      toast('Logotipo carregado — clique em "Salvar alterações".','info');
+    };
+    reader.readAsDataURL(f);
+    return;
+  }
+  if(e.target.matches('.row-preset')){
+    const row = e.target.closest('.prow');
+    if(row && e.target.value) aplicarPresetRow(row, e.target.value);
+    e.target.value = '';
+    return;
+  }
+  if(e.target.id === 'mPapelUser'){
+    const preset = PRESETS[e.target.value] || PRESETS.visualizador;
+    $$('#modalCard input[data-perm]').forEach(cb => { cb.checked = preset.includes(cb.dataset.perm); });
+    return;
+  }
+  if(e.target.matches('.select-papel') && !e.target.classList.contains('row-preset') && ehAdmin(currentUser())){
+    const id = e.target.dataset.user;
+    const usr = currentUser();
+    if(id === usr.id){ toast('Você não pode alterar o próprio papel.','error'); renderUsuarios(); return; }
+    const preset = PRESETS[e.target.value] || PRESETS.visualizador;
+    DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === id ? Object.assign({}, x, {papel: e.target.value, perms: preset.slice()}) : x));
+    toast('Papel e permissões padrão atualizados.'); renderUsuarios();
+  }
+});
+
+$('#loginForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const email = $('#loginEmail').value.trim().toLowerCase();
+  const senha = $('#loginSenha').value;
+  const usr = DB.get('Usuarios').find(x => x.email.toLowerCase() === email && x.senha === senha);
+  if(!usr){ $('#loginErro').textContent = 'E-mail ou senha inválidos.'; return; }
+  session = { userId: usr.id };
+  localStorage.setItem('rio_session', JSON.stringify(session));
+  $('#loginErro').textContent = '';
+  iniciarApp();
+  toast('Bem-vindo(a), ' + usr.nome + '!');
+});
+
+$('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
+
+/* ================= BOOT ================= */
+seed();
+if(currentUser()) iniciarApp(); else mostrarLogin();
+</script>
+</body>
+</html>
