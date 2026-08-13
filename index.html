@@ -329,10 +329,10 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
     <p class="sub"><i class="fa-brands fa-google-drive"></i> Drive + Sheets • Acesso restrito a usuários autorizados</p>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
-        <input id="loginEmail" type="email" required placeholder="nome@rio.gov.br">
+        <input id="loginEmail" type="email" required>
       </label>
       <label class="campo">Senha
-        <input id="loginSenha" type="password" required placeholder="••••••••">
+        <input id="loginSenha" type="password" required>
       </label>
       <div id="loginErro" class="erro"></div>
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
@@ -428,7 +428,6 @@ const PRESETS = {
   editor:       ['visualizar','editar','excluir','imprimir','upload','download','criar_pasta'],
   completo:     ALL_PERMS.slice()
 };
-/* Conversão do formato ANTIGO de permissão de pasta (nivel) para o atual (perms[]) */
 const LEGACY_NIVEL = {
   'ver':    ['visualizar','imprimir'],
   'baixar': ['visualizar','imprimir','download'],
@@ -486,7 +485,6 @@ const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
   set(f, rows){ store.set('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
 };
-/* Leituras normalizadas (compatíveis com dados antigos vindos do Sheets) */
 function getPermissoes(){ return DB.get('Permissoes').map(normPermRow); }
 function getUsuarios(){ return DB.get('Usuarios').map(normUserRow); }
 let pullTimer = null;
@@ -536,7 +534,6 @@ const Sync = {
     const localUsers = DB.get('Usuarios').length;
     const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
     if(serverVazio && localUsers){ this.pushAll(); return false; }
-    /* normaliza formatos antigos antes de gravar localmente */
     if(Array.isArray(data.Permissoes)) data.Permissoes = data.Permissoes.map(normPermRow);
     if(Array.isArray(data.Usuarios))   data.Usuarios   = data.Usuarios.map(normUserRow);
     FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
@@ -827,6 +824,25 @@ function salvarDocArquivo(base, dataUrl){
   return true;
 }
 
+/* ===== MOVER ARQUIVO ===== */
+function nomeCaminho(p){
+  const parts = []; let cur = p;
+  while(cur){ parts.unshift(cur.nome); cur = pastaPorId(cur.parentId); }
+  return parts.join(' / ');
+}
+function modalMover(d){
+  const u = currentUser();
+  const destinos = DB.get('Pastas').filter(p => p.id !== d.pastaId && permsEff(u.id, p).includes('upload'));
+  const opts = (ehAdmin(u) ? '<option value="">Raiz</option>' : '') +
+    destinos.map(p => '<option value="' + p.id + '">' + esc(nomeCaminho(p)) + '</option>').join('');
+  if(!opts){ toast('Nenhuma pasta de destino com permissão de upload.','error'); return; }
+  openModal('<h3><i class="fa-solid fa-folder-tree"></i> Mover arquivo</h3>' +
+    '<p class="modal-sub"><b>' + esc(d.titulo) + '</b> — selecione a pasta de destino. A movimentação também será aplicada no Google Drive.</p>' +
+    '<label class="campo">Pasta de destino<select id="moverDest">' + opts + '</select></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="confirmar-mover" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
+}
+
 /* ===== VISUALIZAÇÃO PROTEGIDA DE PDF ===== */
 let bloqueioAtivo = false;
 let pdfPendente = null;
@@ -893,7 +909,6 @@ function cleanupExemplos(){
   DB.set('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
   store.set('rio_cleaned_v6','1');
 }
-/* Migra dados locais antigos (nivel -> perms[]; usuarios sem perms) e regravará no Sheets no próximo pushAll */
 function migrateDados(){
   if (store.get('rio_migrated_v7')) return;
   let chP = false;
@@ -944,16 +959,17 @@ function permsEff(userId, pasta){
   const global = u.perms || PRESETS.visualizador;
   return grant.filter(k => global.includes(k));
 }
+/* Na raiz, o usuário usa as suas permissões globais (upload/criar pasta etc.) */
 function permsAtuais(){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  if(!state.currentFolderId) return [];
+  if(!state.currentFolderId) return (u.perms || PRESETS.visualizador).slice();
   return permsEff(u.id, pastaPorId(state.currentFolderId));
 }
 function permsDoc(d){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  if(!d.pastaId) return [];
+  if(!d.pastaId){ return d.criadoPor === u.id ? (u.perms || PRESETS.visualizador).slice() : []; }
   return permsEff(u.id, pastaPorId(d.pastaId));
 }
 function trilha(){
@@ -1072,7 +1088,7 @@ function renderDashboard(){
         (state.currentFolderId ? '<span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
       '</div>' +
       '<div class="toolbar">' +
-        '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" placeholder="Pesquisar documentos..." value="' + esc(state.search) + '"></div>' +
+        '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" value="' + esc(state.search) + '"></div>' +
         '<div class="toolbar-actions">' +
           (perms.includes('criar_pasta') ? '<button class="btn btn-light" data-action="nova-pasta"><i class="fa-solid fa-folder-plus"></i> Nova Pasta</button>' : '') +
           (perms.includes('upload')
@@ -1116,7 +1132,7 @@ function renderItens(){
   let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
   if(!state.currentFolderId && !ehAdmin(u)){
     folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
-    docs = [];
+    docs = docs.filter(d => d.criadoPor === u.id);
   } else if(state.currentFolderId){
     folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
   }
@@ -1137,6 +1153,7 @@ function renderItens(){
   const acoesDoc = (d, pd) =>
     '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
     btnBaixar(d, pd.includes('download')) +
+    (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
     (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
     (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
 
@@ -1227,8 +1244,8 @@ function handleUpload(file){
 /* ================= MODAIS ================= */
 function modalNovaPasta(){
   openModal('<h3><i class="fa-solid fa-folder-plus"></i> Nova pasta</h3>' +
-    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b>. Pastas criadas por você são <b>privadas</b> (visíveis só para você e administradores) até que você as compartilhe.</p>' +
-    '<label class="campo">Nome da pasta<input id="mNomePasta" placeholder="Ex.: Contratos 2026"></label>' +
+    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b> e também no Google Drive. Pastas criadas por você são <b>privadas</b> até serem compartilhadas.</p>' +
+    '<label class="campo">Nome da pasta<input id="mNomePasta"></label>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-pasta"><i class="fa-solid fa-folder-plus"></i> Criar pasta</button></div>');
   setTimeout(() => { const i = $('#mNomePasta'); if(i) i.focus(); }, 60);
@@ -1237,10 +1254,10 @@ function modalDoc(docId){
   const d = docId ? DB.get('Documentos').find(x => x.id === docId) : null;
   const isFile = d && d.tipo === 'arquivo';
   openModal('<h3><i class="fa-solid ' + (isFile ? catInfo(d).ic : 'fa-file-pen') + '"></i> ' + (d ? (isFile ? 'Renomear arquivo' : 'Editar documento') : 'Novo documento') + '</h3>' +
-    '<label class="campo">Título<input id="mTitulo" value="' + (d ? esc(d.titulo) : '') + '" placeholder="Título do documento"></label>' +
+    '<label class="campo">Título<input id="mTitulo" value="' + (d ? esc(d.titulo) : '') + '"></label>' +
     (isFile
       ? '<p class="modal-sub"><i class="fa-solid fa-circle-info"></i> Use o botão "caneta" na lista para abrir o editor de DOCX/XLSX. Aqui você apenas renomeia o arquivo.</p>'
-      : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12" placeholder="Escreva aqui o conteúdo do documento...">' + (d ? esc(d.conteudo) : '') + '</textarea></label>') +
+      : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12"></textarea></label>') +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
   setTimeout(() => { const i = $('#mTitulo'); if(i) i.focus(); }, 60);
@@ -1253,7 +1270,7 @@ function modalEditarUsuario(userId){
     '<p class="modal-sub">' + (ehAdmin(u) ? 'Como administrador você pode alterar os dados de qualquer usuário.' : 'Você pode alterar apenas os seus próprios dados.') + '</p>' +
     '<label class="campo">Nome completo<input id="eNome" value="' + esc(x.nome) + '"></label>' +
     '<label class="campo">E-mail<input id="eEmail" type="email" value="' + esc(x.email) + '"></label>' +
-    '<label class="campo">Nova senha<input id="eSenha" type="text" placeholder="Deixe em branco para manter a senha atual"></label>' +
+    '<label class="campo">Nova senha<input id="eSenha" type="text"></label>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-dados-usuario" data-id="' + x.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
 }
@@ -1311,6 +1328,7 @@ function modalVer(docId){
       : '<button class="btn btn-light" disabled title="Download não permitido"><i class="fa-solid fa-lock"></i> Baixar</button>') +
     (podeImprimir ? '<button class="btn btn-light" data-action="imprimir-doc" data-id="' + d.id + '"><i class="fa-solid fa-print"></i> Imprimir</button>' : '') +
     (podeBaixar && d.driveUrl ? '<button class="btn btn-light" data-action="abrir-drive" data-id="' + d.id + '"><i class="fa-brands fa-google-drive"></i> Abrir no Drive</button>' : '') +
+    (pd.includes('editar') ? '<button class="btn btn-light" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button>' : '') +
     (pd.includes('editar') ? '<button class="btn btn-light" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i> Editar</button>' : '') +
     '<button class="btn btn-primary" data-action="fechar-modal">Fechar</button>';
   openModal('<div class="doc-head"><h3><i class="fa-solid ' + ci.ic + '"></i> ' + esc(d.titulo) + '</h3>' +
@@ -1346,7 +1364,7 @@ function atualizarPcount(row){
   if(sp){ sp.textContent = n ? n + ' permissão' + (n>1?'s':'') : 'Sem acesso'; sp.className = 'pcount tag ' + (n ? 'tag-edit' : 'tag-view'); }
 }
 function aplicarPresetRow(row, nome){
-  let set = presetSet(nome);
+  const set = presetSet(nome);
   $$('.ptog', row).forEach(b => b.classList.toggle('on', set.includes(b.dataset.perm)));
   atualizarPcount(row);
 }
@@ -1371,7 +1389,7 @@ function modalCompartilhar(pastaId){
   openModal('<h3><i class="fa-solid fa-share-nodes"></i> Permissões da pasta</h3>' +
     '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — clique nos ícones para ligar/desligar cada permissão (subpastas herdam). "Visualizar" é obrigatório para a pasta aparecer; sem "download + imprimir" o PDF abre em visualização protegida.</p>' +
     '<div class="perm-topbar">' +
-      '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="permBusca" placeholder="Buscar usuário por nome ou e-mail..."></div>' +
+      '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="permBusca"></div>' +
       '<div class="perm-bulk">' +
         '<button data-action="bulk-preset" data-preset="leitor" title="Aplicar perfil Leitor a todos">Todos: Leitor</button>' +
         '<button data-action="bulk-preset" data-preset="editor" title="Aplicar perfil Editor a todos">Todos: Editor</button>' +
@@ -1482,9 +1500,9 @@ function renderUsuarios(){
 }
 function modalNovoUsuario(){
   openModal('<h3><i class="fa-solid fa-user-plus"></i> Novo usuário</h3>' +
-    '<label class="campo">Nome completo<input id="mNomeUser" placeholder="Ex.: Maria Silva"></label>' +
-    '<label class="campo">E-mail<input id="mEmailUser" type="email" placeholder="maria.silva@rio.gov.br"></label>' +
-    '<label class="campo">Senha<input id="mSenhaUser" type="text" placeholder="mínimo 6 caracteres"></label>' +
+    '<label class="campo">Nome completo<input id="mNomeUser"></label>' +
+    '<label class="campo">E-mail<input id="mEmailUser" type="email"></label>' +
+    '<label class="campo">Senha<input id="mSenhaUser" type="text"></label>' +
     '<label class="campo">Papel<select id="mPapelUser"><option value="editor">Editor</option><option value="visualizador">Leitor</option><option value="admin">Administrador</option></select></label>' +
     '<p class="modal-sub" style="margin-bottom:2px"><i class="fa-solid fa-shield-halved"></i> Permissões do usuário (ajuste à vontade):</p>' +
     permsCheckboxes(PRESETS.editor) +
@@ -1512,17 +1530,16 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
+/* ===== BACKEND APPS SCRIPT (Sheets + Drive com pastas espelhadas) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
 ' GOOGLE APPS SCRIPT - Code.gs\n' +
-' Backend: Google Sheets (dados) + Google Drive (arquivos)\n' +
-' 1) Crie uma Google Sheet vazia\n' +
-' 2) Extensões > Apps Script e cole este código\n' +
-' 3) Implantar > Nova implantação > Aplicativo da Web\n' +
-'    - Executar como: eu mesmo\n' +
-'    - Quem tem acesso: qualquer pessoa\n' +
-' 4) Autorize Drive + Planilhas ao implantar\n' +
-' 5) A URL /exec já vem configurada no aplicativo\n' +
+' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
+' - Cria no Drive uma pasta para cada pasta do app\n' +
+'   (SGD_Arquivos > estrutura espelhada).\n' +
+' - Uploads entram na pasta correta; movimentações\n' +
+'   de arquivo movem o arquivo no Drive.\n' +
+' Implantação: Aplicativo da Web (eu mesmo / qualquer pessoa).\n' +
 '=====================================================\n\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
 'function folha_(nome){\n' +
@@ -1531,7 +1548,7 @@ const SCRIPT_GAS =
 '  if (!sh) sh = ss.insertSheet(nome);\n' +
 '  return sh;\n' +
 '}\n\n' +
-'function pastaDrive_(){\n' +
+'function pastaDriveRaiz_(){\n' +
 '  var props = PropertiesService.getScriptProperties();\n' +
 '  var id = props.getProperty("DRIVE_FOLDER");\n' +
 '  var folder = null;\n' +
@@ -1543,32 +1560,75 @@ const SCRIPT_GAS =
 '  }\n' +
 '  return folder;\n' +
 '}\n\n' +
-'function anexarDrive_(r){\n' +
-'  if (r.arquivo && String(r.arquivo).indexOf("data:") === 0 && !r.driveId){\n' +
+'function lerFolha_(nome){\n' +
+'  var sh = folha_(nome);\n' +
+'  var last = sh.getLastRow();\n' +
+'  var out = [];\n' +
+'  if (last >= 1){\n' +
+'    var vals = sh.getRange(1,1,last,1).getValues();\n' +
+'    for (var i=0;i<vals.length;i++){\n' +
+'      if (!vals[i][0]) continue;\n' +
+'      try { out.push({row:i+1, obj: JSON.parse(vals[i][0])}); } catch(e){}\n' +
+'    }\n' +
+'  }\n' +
+'  return out;\n' +
+'}\n\n' +
+'function gravarLinha_(nome, row, obj){\n' +
+'  folha_(nome).getRange(row,1).setValue(JSON.stringify(obj));\n' +
+'}\n\n' +
+'function ensureDriveFolder_(pastaId, cache){\n' +
+'  if (!pastaId) return pastaDriveRaiz_();\n' +
+'  if (cache[pastaId]) return cache[pastaId];\n' +
+'  var rows = lerFolha_("Pastas");\n' +
+'  var found = null;\n' +
+'  for (var i=0;i<rows.length;i++){ if (rows[i].obj.id === pastaId){ found = rows[i]; break; } }\n' +
+'  if (!found) return pastaDriveRaiz_();\n' +
+'  var obj = found.obj;\n' +
+'  if (obj.driveFolderId){\n' +
+'    try { cache[pastaId] = DriveApp.getFolderById(obj.driveFolderId); return cache[pastaId]; } catch(e){}\n' +
+'  }\n' +
+'  var parent = ensureDriveFolder_(obj.parentId, cache);\n' +
+'  var it = parent.getFoldersByName(obj.nome);\n' +
+'  var folder = it.hasNext() ? it.next() : parent.createFolder(obj.nome);\n' +
+'  obj.driveFolderId = folder.getId();\n' +
+'  gravarLinha_("Pastas", found.row, obj);\n' +
+'  cache[pastaId] = folder;\n' +
+'  return folder;\n' +
+'}\n\n' +
+'function processarDoc_(r, cache){\n' +
+'  var out = JSON.parse(JSON.stringify(r));\n' +
+'  var mudou = false;\n' +
+'  if (out.arquivo && String(out.arquivo).indexOf("data:") === 0 && !out.driveId){\n' +
 '    try {\n' +
-'      var parts = String(r.arquivo).split(",");\n' +
+'      var folder = ensureDriveFolder_(out.pastaId, cache);\n' +
+'      var parts = String(out.arquivo).split(",");\n' +
 '      var m = parts[0].match(/data:(.*?);base64/);\n' +
 '      var mime = m ? m[1] : "application/octet-stream";\n' +
 '      var bytes = Utilities.base64Decode(parts[1]);\n' +
-'      var nome = (r.titulo || "arquivo") + "." + (r.ext || "bin");\n' +
-'      var file = pastaDrive_().createFile(Utilities.newBlob(bytes, mime, nome));\n' +
+'      var nome = (out.titulo || "arquivo") + "." + (out.ext || "bin");\n' +
+'      var file = folder.createFile(Utilities.newBlob(bytes, mime, nome));\n' +
 '      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
-'      r.driveId = file.getId();\n' +
-'      r.driveUrl = file.getUrl();\n' +
+'      out.driveId = file.getId();\n' +
+'      out.driveUrl = file.getUrl();\n' +
+'      mudou = true;\n' +
 '    } catch(e) {}\n' +
-'    r.arquivo = "";\n' +
+'    out.arquivo = "";\n' +
 '  }\n' +
-'  return r;\n' +
+'  if (out.movePending && out.driveId){\n' +
+'    try {\n' +
+'      var file2 = DriveApp.getFileById(out.driveId);\n' +
+'      var target = ensureDriveFolder_(out.pastaId, cache);\n' +
+'      file2.moveTo(target);\n' +
+'      mudou = true;\n' +
+'    } catch(e) {}\n' +
+'    out.movePending = false;\n' +
+'  }\n' +
+'  return mudou ? out : r;\n' +
 '}\n\n' +
 'function doGet(){\n' +
 '  var out = {};\n' +
 '  FOLHAS.forEach(function(f){\n' +
-'    var sh = folha_(f);\n' +
-'    var last = Math.max(sh.getLastRow(), 1);\n' +
-'    var vals = sh.getRange(1,1,last,1).getValues();\n' +
-'    out[f] = vals.map(function(r){\n' +
-'      try { return JSON.parse(r[0]); } catch(e){ return null; }\n' +
-'    }).filter(function(x){ return !!x; });\n' +
+'    out[f] = lerFolha_(f).map(function(r){ return r.obj; });\n' +
 '  });\n' +
 '  return ContentService.createTextOutput(JSON.stringify(out))\n' +
 '    .setMimeType(ContentService.MimeType.JSON);\n' +
@@ -1579,12 +1639,23 @@ const SCRIPT_GAS =
 '  try {\n' +
 '    var body = JSON.parse(e.postData.contents);\n' +
 '    var rows = body.rows || [];\n' +
-'    if (body.folha === "Documentos") rows = rows.map(anexarDrive_);\n' +
+'    var cache = {};\n' +
 '    var sh = folha_(body.folha);\n' +
 '    sh.clearContents();\n' +
 '    if (rows.length){\n' +
 '      var values = rows.map(function(r){ return [JSON.stringify(r)]; });\n' +
 '      sh.getRange(1,1,values.length,1).setValues(values);\n' +
+'    }\n' +
+'    if (body.folha === "Pastas"){\n' +
+'      rows.forEach(function(r){ try{ ensureDriveFolder_(r.id, cache); }catch(err){} });\n' +
+'    } else if (body.folha === "Documentos"){\n' +
+'      var changed = false;\n' +
+'      rows = rows.map(function(r){ var nr = processarDoc_(r, cache); if (nr !== r) changed = true; return nr; });\n' +
+'      if (changed){\n' +
+'        sh.clearContents();\n' +
+'        var v2 = rows.map(function(r){ return [JSON.stringify(r)]; });\n' +
+'        sh.getRange(1,1,v2.length,1).setValues(v2);\n' +
+'      }\n' +
 '    }\n' +
 '    return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
 '      .setMimeType(ContentService.MimeType.JSON);\n' +
@@ -1612,11 +1683,11 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b> (formato compatível com versões anteriores após sincronização), <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Integração oficial com o Apps Script (Sheets + Drive): arquivos gravados na pasta <b>SGD_Arquivos</b>.</p>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos entre pastas</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Usuários com permissão de "criar pasta" e "upload" criam pastas e enviam arquivos diretamente para a pasta correta do Drive.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
     '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada e <b>gravada neste navegador</b> (botão "Salvar URL" ou tecla Enter). Se o campo for limpo, a URL oficial padrão é usada automaticamente.</p>' +
-    '<div class="integ-row"><input id="urlGas" placeholder="https://script.google.com/macros/s/XXXX/exec" value="' + esc(url) + '">' +
+    '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Baixar do Sheets</button></div>' +
   '</section>' +
@@ -1695,6 +1766,24 @@ document.addEventListener('click', e => {
       break;
     }
     case 'ver-doc': modalVer(id); break;
+    case 'mover-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      modalMover(d);
+      break;
+    }
+    case 'confirmar-mover': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      const dest = ($('#moverDest') || {}).value;
+      const destId = dest === '' ? null : dest;
+      if(destId === d.pastaId){ toast('O arquivo já está nesta pasta.','info'); break; }
+      const alvo = destId ? pastaPorId(destId) : null;
+      if(destId && !permsEff(u.id, alvo).includes('upload')){ toast('Sem permissão de upload na pasta de destino.','error'); break; }
+      DB.set('Documentos', DB.get('Documentos').map(x => x.id === id ? Object.assign({}, x, {pastaId: destId, movePending: true, atualizadoEm: Date.now()}) : x));
+      fecharModal();
+      toast('Arquivo movido para "' + (alvo ? alvo.nome : 'Raiz') + '". Sincronizando no Drive…');
+      renderItens();
+      break;
+    }
     case 'editar-doc': {
       const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
       const cat = categoria(d);
@@ -1827,7 +1916,7 @@ document.addEventListener('click', e => {
       const perms = permsAtuais();
       const dono = p && (p.criadaPor === u.id || ehAdmin(u));
       if(!dono && !perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
-      modalConfirm('Excluir pasta', 'Excluir a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos?', () => {
+      modalConfirm('Excluir pasta', 'Excluir a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos? (A pasta do Drive permanece com os arquivos já enviados.)', () => {
         excluirPastaRec(id);
         if(state.currentFolderId === id) state.currentFolderId = null;
         toast('Pasta excluída.'); renderDashboard();
@@ -1892,7 +1981,7 @@ document.addEventListener('click', e => {
       if(!nome || !nome.trim()){ toast('Informe o nome da pasta.','error'); return; }
       const pastas = DB.get('Pastas');
       pastas.push({id: uid('f'), nome: nome.trim(), parentId: state.currentFolderId, criadaPor: u.id, criadaEm: Date.now()});
-      DB.set('Pastas', pastas); fecharModal(); toast('Pasta privada criada — compartilhe para liberar acesso.'); renderDashboard(); break;
+      DB.set('Pastas', pastas); fecharModal(); toast('Pasta criada — sincronizando no Google Drive…'); renderDashboard(); break;
     }
     case 'salvar-doc': {
       const titulo = ($('#mTitulo') || {}).value.trim();
@@ -1921,7 +2010,6 @@ document.addEventListener('click', e => {
       $$('#modalCard .prow').forEach(row => {
         const userId = row.dataset.user;
         let conjunto = $$('.ptog.on', row).map(b => b.dataset.perm);
-        /* garante coerência: qualquer acesso exige "visualizar" */
         if(conjunto.length && !conjunto.includes('visualizar')) conjunto.unshift('visualizar');
         perms = perms.filter(pp => !(pp.pastaId === id && pp.userId === userId));
         if(conjunto.length) perms.push({id: uid('p'), pastaId: id, userId: userId, perms: conjunto});
