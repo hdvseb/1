@@ -50,11 +50,6 @@ button{font-family:inherit}
 .campo input:disabled{background:#eef1f6;color:#7a8aa8}
 .campo input:focus,.campo textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.15)}
 .erro{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:6px}
-.demo-box{margin-top:20px;background:#f2f7ff;border:1px dashed #b9cdec;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#33518b}
-.demo-box strong{display:block;margin-bottom:8px;color:var(--heading)}
-.demo-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;flex-wrap:wrap}
-.demo-row button{border:none;background:#e2edff;color:var(--primary);font-size:11.5px;font-weight:700;border-radius:6px;padding:5px 9px;cursor:pointer}
-.demo-row button:hover{background:var(--primary);color:#fff}
 /* ===== shell ===== */
 .topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
 .topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
@@ -325,13 +320,13 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 </head>
 <body>
 
-<!-- ==================== LOGIN ==================== -->
+<!-- ==================== LOGIN (sem informações de usuários) ==================== -->
 <div id="loginScreen" class="login-screen">
   <div class="login-card">
     <img id="loginLogo" src="https://image.qwenlm.ai/public_source/a7a5b907-a0d8-4344-a85b-9f44a626aef3/1965d3a9f-6a4e-42c6-b848-3dc94ea23d48.png" alt="Logotipo">
     <div class="nome-empresa" id="loginEmpresa"></div>
     <h1>Gestão de Documentos</h1>
-    <p class="sub"><i class="fa-brands fa-google-drive"></i> Drive + Sheets • Câmera, DOCX/XLSX e mais</p>
+    <p class="sub"><i class="fa-brands fa-google-drive"></i> Drive + Sheets • Acesso restrito a usuários autorizados</p>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
         <input id="loginEmail" type="email" required placeholder="nome@rio.gov.br">
@@ -342,12 +337,6 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <div id="loginErro" class="erro"></div>
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
-    <div class="demo-box">
-      <strong><i class="fa-solid fa-key"></i> Contas de demonstração</strong>
-      <div class="demo-row"><span>master@admin.rio.gov.br · admin123 <b>(Master Admin)</b></span><button type="button" data-action="preencher" data-email="master@admin.rio.gov.br" data-senha="admin123">Usar</button></div>
-      <div class="demo-row"><span>ana.souza@rio.gov.br · editor123 <b>(Editor)</b></span><button type="button" data-action="preencher" data-email="ana.souza@rio.gov.br" data-senha="editor123">Usar</button></div>
-      <div class="demo-row"><span>carlos.lima@rio.gov.br · leitor123 <b>(Leitor)</b></span><button type="button" data-action="preencher" data-email="carlos.lima@rio.gov.br" data-senha="leitor123">Usar</button></div>
-    </div>
   </div>
 </div>
 
@@ -396,6 +385,12 @@ const VIEW_MODES = [
   {m:'lista',    label:'Lista',                ic:'fa-list-ul'},
   {m:'detalhes', label:'Detalhes',             ic:'fa-list-check'}
 ];
+/* Armazenamento com fallback em memória (caso o navegador bloqueie localStorage) */
+const store = {
+  _m: {},
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ this._m[k] = v; } }
+};
 function formatosPermitidos(){
   const f = getEmpresa().formats;
   return (Array.isArray(f) && f.length) ? f : DEFAULT_FORMATS;
@@ -474,8 +469,8 @@ function catInfo(d){ return CATS[categoria(d)]; }
 /* ============ DB / SYNC ============ */
 const pendingArquivos = {};
 const DB = {
-  get(f){ try{ return JSON.parse(localStorage.getItem('rio_'+f)) || []; }catch(e){ return []; } },
-  set(f, rows){ localStorage.setItem('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
+  get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
+  set(f, rows){ store.set('rio_'+f, JSON.stringify(rows)); Sync.push(f, rows); }
 };
 let pullTimer = null;
 function agendarPull(){
@@ -494,8 +489,8 @@ function agendarPull(){
   }, 3500);
 }
 const Sync = {
-  url(){ const v = localStorage.getItem('rio_gas_url'); return (v !== null) ? v : DEFAULT_GAS_URL; },
-  setUrl(u){ localStorage.setItem('rio_gas_url', u || ''); atualizarBadge(); },
+  url(){ const v = store.get('rio_gas_url'); return (v !== null && v !== '') ? v : DEFAULT_GAS_URL; },
+  setUrl(u){ store.set('rio_gas_url', u || ''); atualizarBadge(); },
   push(f, rows){
     const url = this.url(); if(!url) return;
     let out = rows;
@@ -516,14 +511,12 @@ const Sync = {
     const r = await fetch(url); const data = await r.json();
     return data;
   },
-  /* Aplica dados do servidor com proteção: se o servidor estiver vazio e houver
-     dados locais, envia os locais primeiro (evita apagar o cadastro). */
   applyData(data){
     if(!data) return false;
     const localUsers = DB.get('Usuarios').length;
     const serverVazio = (!Array.isArray(data.Usuarios) || data.Usuarios.length === 0);
     if(serverVazio && localUsers){ this.pushAll(); return false; }
-    FOLHAS.forEach(f => { if(Array.isArray(data[f])) localStorage.setItem('rio_'+f, JSON.stringify(data[f])); });
+    FOLHAS.forEach(f => { if(Array.isArray(data[f])) store.set('rio_'+f, JSON.stringify(data[f])); });
     return true;
   }
 };
@@ -849,92 +842,42 @@ document.addEventListener('mousedown', e => {
   if(e.target.closest('[data-action="w-cmd"]')) e.preventDefault();
 });
 
-/* ============ arquivos de exemplo ============ */
-function b64txt(s){ return btoa(unescape(encodeURIComponent(s))); }
-function gerarExemplosPDF(){
-  if(!(window.jspdf && window.jspdf.jsPDF)) return [];
-  const jsPDF = window.jspdf.jsPDF;
-  const out = [];
-  let d = new jsPDF();
-  d.setFont('times','bold'); d.setFontSize(14);
-  d.text('PREFEITURA DA CIDADE DO RIO DE JANEIRO', 105, 20, {align:'center'});
-  d.setFontSize(12); d.text('DIÁRIO OFICIAL DO MUNICÍPIO - EDIÇÃO EXTRA', 105, 28, {align:'center'});
-  d.setFont('times','normal'); d.setFontSize(11);
-  d.text('Rio de Janeiro, 12 de agosto de 2026.', 105, 36, {align:'center'});
-  d.setLineWidth(0.4); d.line(20, 41, 190, 41);
-  d.setFont('times','bold'); d.text('DECRETO RIO Nº 52.345/2026', 20, 50);
-  d.setFont('times','normal');
-  let y = 57;
-  const t1 = d.splitTextToSize('Dispõe sobre a digitalização e a gestão eletrônica de documentos no âmbito da Administração Pública Municipal.', 170);
-  d.text(t1, 20, y); y += t1.length * 5.5 + 6;
-  ['Art. 1º Fica instituído o Sistema Eletrônico de Gestão Documental.',
-   'Art. 2º Os documentos originais deverão ser guardados pelo prazo de 5 (cinco) anos.',
-   'Art. 3º As pastas digitais observarão as permissões de acesso por perfil de usuário.',
-   'Art. 4º Este Decreto entra em vigor na data de sua publicação.'].forEach(a => {
-    const bl = d.splitTextToSize(a, 170); d.text(bl, 20, y); y += bl.length * 5.5 + 4;
-  });
-  out.push({titulo:'Diário Oficial - Edição Extra 12/08/2026', ext:'pdf', mime:'application/pdf', arquivo:d.output('dataurlstring')});
-  d = new jsPDF();
-  d.setFont('helvetica','bold'); d.setFontSize(13);
-  d.text('EDITAL DE CONCORRÊNCIA Nº 04/2026', 105, 25, {align:'center'});
-  d.setFont('helvetica','normal'); d.setFontSize(11);
-  y = 40;
-  ['Objeto: contratação de empresa especializada em digitalização de acervo documental.',
-   '1. Das propostas: até 30/09/2026, às 14h.',
-   '2. Da habilitação: documentos conforme Anexo I.',
-   '3. Dos recursos: prazo legal de 5 dias úteis.'].forEach(tx => {
-    const bl = d.splitTextToSize(tx, 170); d.text(bl, 20, y); y += bl.length * 5.5 + 5;
-  });
-  out.push({titulo:'Edital de Concorrência Nº 04/2026 (PDF oficial)', ext:'pdf', mime:'application/pdf', arquivo:d.output('dataurlstring')});
-  return out;
-}
-
-/* ================= SEED ================= */
+/* ================= SEED (sem dados de exemplo) ================= */
 function seed(){
   if (DB.get('Empresa').length === 0) setEmpresa(EMPRESA_PADRAO);
-  if (localStorage.getItem('rio_seeded_v5')) return;
-  const t = Date.now();
-  DB.set('Usuarios', [
-    {id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123', papel:'master', perms:ALL_PERMS.slice(), criadoEm:t},
-    {id:'u_ana',    nome:'Ana Souza',    email:'ana.souza@rio.gov.br',    senha:'editor123', papel:'editor', perms:PRESETS.editor.slice(), criadoEm:t},
-    {id:'u_carlos', nome:'Carlos Lima',  email:'carlos.lima@rio.gov.br',  senha:'leitor123', papel:'visualizador', perms:PRESETS.visualizador.slice(), criadoEm:t}
-  ]);
-  DB.set('Pastas', [
-    {id:'f_pub', nome:'Publicações Oficiais',     parentId:null,    criadaPor:'u_master', criadaEm:t},
-    {id:'f_adm', nome:'Documentos Administrativos', parentId:null,  criadaPor:'u_master', criadaEm:t},
-    {id:'f_rh',  nome:'RH - Recursos Humanos',     parentId:null,    criadaPor:'u_master', criadaEm:t},
-    {id:'f_edi', nome:'Editais e Chamamentos',     parentId:'f_pub', criadaPor:'u_master', criadaEm:t}
-  ]);
-  DB.set('Permissoes', [
-    {id:'p1', pastaId:'f_pub', userId:'u_ana',    perms:['visualizar','editar','excluir','imprimir','upload','download','criar_pasta']},
-    {id:'p2', pastaId:'f_pub', userId:'u_carlos', perms:['visualizar','download','imprimir']},
-    {id:'p3', pastaId:'f_adm', userId:'u_ana',    perms:['visualizar','imprimir']},
-    {id:'p4', pastaId:'f_edi', userId:'u_carlos', perms:['visualizar','imprimir']}
-  ]);
-  const docs = [
-    {id:'d1', pastaId:'f_pub', titulo:'Decreto Rio Nº 52.345/2026', tipo:'texto', criadoPor:'u_master', criadoEm:t, atualizadoEm:t,
-     conteudo:'DECRETO RIO Nº 52.345/2026\n\nDispõe sobre a digitalização e gestão eletrônica de documentos no âmbito da Administração Pública Municipal.\n\nArt. 1º Fica instituído o Sistema Eletrônico de Gestão Documental.\nArt. 2º Os documentos originais deverão ser guardados pelo prazo de 5 (cinco) anos.\nArt. 3º Este Decreto entra em vigor na data de sua publicação.\n\nRio de Janeiro, 12 de agosto de 2026.'},
-    {id:'d3', pastaId:'f_adm', titulo:'Ata de Reunião - 02/2026', tipo:'texto', criadoPor:'u_ana', criadoEm:t, atualizadoEm:t,
-     conteudo:'ATA DE REUNIÃO 02/2026\n\nPauta: implantação do sistema de documentos digitais.\n\nDeliberações:\n1) Aprovação do cronograma de implantação;\n2) Treinamento de usuários em setembro/2026;\n3) Revisão das permissões de acesso por pasta.'},
-    {id:'d4', pastaId:'f_rh', titulo:'Folha de Ponto - Janeiro 2026 (Confidencial)', tipo:'texto', criadoPor:'u_master', criadoEm:t, atualizadoEm:t,
-     conteudo:'FOLHA DE PONTO - JANEIRO/2026\n\nDocumento CONFIDENCIAL de acesso restrito.\n\nServidor: ...\nHoras trabalhadas: ...\nObservações: ...'}
-  ];
-  gerarExemplosPDF().forEach((p, i) => {
-    docs.push({id:'d'+(6+i), pastaId: i === 0 ? 'f_pub' : 'f_edi', titulo:p.titulo, tipo:'arquivo', ext:p.ext, mime:p.mime, arquivo:p.arquivo, tamanho:Math.round(p.arquivo.length * 0.75), criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
-  });
-  const txt = 'COMUNICADO INTERNO Nº 07/2026\n\nSenhores servidores,\n\nInformamos que o novo sistema de gestão documental entra em operação em 01/09/2026.\n\nAtenciosamente,\nCoordenadoria de Administração.';
-  docs.push({id:'d9', pastaId:'f_adm', titulo:'Comunicado Interno 07/2026', tipo:'arquivo', ext:'txt', mime:'text/plain', arquivo:'data:text/plain;base64,' + b64txt(txt), tamanho:txt.length, criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
-  const csv = 'protocolo;setor;status\n2026/004517;SEMFA;Aberto\n2026/004518;SEMED;Em análise\n2026/004519;SEMAS;Concluído\n2026/004520;SECON;Aberto';
-  docs.push({id:'d10', pastaId:'f_adm', titulo:'Relatório de Protocolos 2026 (CSV)', tipo:'arquivo', ext:'csv', mime:'text/csv', arquivo:'data:text/csv;base64,' + b64txt(csv), tamanho:csv.length, criadoPor:'u_ana', criadoEm:t, atualizadoEm:t});
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="220"><rect width="420" height="220" rx="14" fill="#1552c2"/><circle cx="210" cy="92" r="46" fill="#ffffff"/><text x="210" y="100" font-size="26" fill="#1552c2" text-anchor="middle" font-family="Arial" font-weight="bold">RIO</text><text x="210" y="182" font-size="20" fill="#ffffff" text-anchor="middle" font-family="Arial">Prefeitura do Rio - SGD</text></svg>';
-  docs.push({id:'d11', pastaId:'f_pub', titulo:'Identidade Visual - SGD (SVG)', tipo:'arquivo', ext:'svg', mime:'image/svg+xml', arquivo:'data:image/svg+xml;base64,' + b64txt(svg), tamanho:svg.length, criadoPor:'u_master', criadoEm:t, atualizadoEm:t});
-  DB.set('Documentos', docs);
-  localStorage.setItem('rio_seeded_v5','1');
+  if (!store.get('rio_seeded_v6')){
+    /* Instalação limpa: apenas o administrador inicial, sem pastas/documentos de exemplo */
+    if (DB.get('Usuarios').length === 0){
+      DB.set('Usuarios', [{
+        id:'u_master', nome:'Master Admin', email:'master@admin.rio.gov.br', senha:'admin123',
+        papel:'master', perms:ALL_PERMS.slice(), criadoEm:Date.now()
+      }]);
+    }
+    store.set('rio_seeded_v6','1');
+  }
+}
+/* Remove os antigos dados de exemplo (sem apagar dados reais):
+   documentos/pastas/usuários de demonstração são excluídos e qualquer
+   arquivo real que estivesse dentro das pastas de exemplo é movido para a Raiz. */
+function cleanupExemplos(){
+  if (store.get('rio_cleaned_v6')) return;
+  const sampleDocs = ['d1','d3','d4','d6','d7','d9','d10','d11'];
+  const sampleFolders = ['f_pub','f_adm','f_rh','f_edi'];
+  const sampleUsers = ['u_ana','u_carlos'];
+  DB.set('Documentos', DB.get('Documentos')
+    .filter(d => !sampleDocs.includes(d.id))
+    .map(d => sampleFolders.includes(d.pastaId) ? Object.assign({}, d, {pastaId: null}) : d));
+  DB.set('Pastas', DB.get('Pastas')
+    .filter(p => !sampleFolders.includes(p.id))
+    .map(p => sampleFolders.includes(p.parentId) ? Object.assign({}, p, {parentId: null}) : p));
+  DB.set('Permissoes', DB.get('Permissoes').filter(pp => !sampleFolders.includes(pp.pastaId) && !sampleUsers.includes(pp.userId)));
+  DB.set('Usuarios', DB.get('Usuarios').filter(x => !sampleUsers.includes(x.id)));
+  store.set('rio_cleaned_v6','1');
 }
 
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
-try{ session = JSON.parse(localStorage.getItem('rio_session') || 'null'); }catch(e){ session = null; }
+try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
 const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
 let currentBlobUrl = null;
 let cfgLogo = null;
@@ -1031,7 +974,6 @@ function iniciarApp(){
   $('#app').classList.remove('hidden');
   state.viewMode = 'detalhes';
   renderApp();
-  /* primeira sincronização: envia os dados locais para o servidor (protege contra servidor vazio) */
   if(Sync.url()) setTimeout(() => Sync.pushAll(), 1200);
 }
 function renderApp(){
@@ -1608,6 +1550,13 @@ const SCRIPT_GAS =
 '    lock.releaseLock();\n' +
 '  }\n' +
 '}\n';
+function salvarUrl(){
+  const inp = $('#urlGas'); if(!inp) return;
+  const v = inp.value.trim();
+  Sync.setUrl(v);
+  toast(v ? 'URL gravada com sucesso neste navegador.' : 'URL limpa — usando a URL oficial padrão.','info');
+  renderSobre();
+}
 function renderSobre(){
   const url = Sync.url();
   const e = getEmpresa();
@@ -1624,7 +1573,7 @@ function renderSobre(){
     '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b>, <b>visualização padrão em Detalhes</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Integração oficial já configurada com o Apps Script (Sheets + Drive): os arquivos enviados são gravados na pasta <b>SGD_Arquivos</b> do Google Drive.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada. Se necessário, você pode substituí-la ou limpar o campo abaixo (o app volta ao modo local).</p>' +
+    '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada e <b>gravada neste navegador</b> (botão "Salvar URL" ou tecla Enter). Se o campo for limpo, a URL oficial padrão é usada automaticamente.</p>' +
     '<div class="integ-row"><input id="urlGas" placeholder="https://script.google.com/macros/s/XXXX/exec" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="testar-sync"><i class="fa-solid fa-rotate"></i> Baixar do Sheets</button></div>' +
@@ -1634,6 +1583,8 @@ function renderSobre(){
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
+  const ug = $('#urlGas');
+  if(ug) ug.addEventListener('keydown', ev => { if(ev.key === 'Enter'){ ev.preventDefault(); salvarUrl(); } });
   atualizarBadge();
 }
 
@@ -1652,7 +1603,7 @@ document.addEventListener('click', e => {
 
   switch(a){
     case 'logout':
-      session = null; localStorage.removeItem('rio_session'); mostrarLogin(); break;
+      session = null; store.set('rio_session',''); mostrarLogin(); break;
     case 'nav':
       state.view = el.dataset.view; state.search = ''; $('#sidebar').classList.remove('open'); renderApp(); break;
     case 'menu-view': {
@@ -1969,9 +1920,8 @@ document.addEventListener('click', e => {
     case 'copiar-script':
       navigator.clipboard.writeText(SCRIPT_GAS).then(() => toast('Código Apps Script copiado!','info')); break;
     case 'salvar-url':
-      Sync.setUrl(($('#urlGas').value || '').trim());
-      toast(Sync.url() ? 'URL salva — sincronização Sheets/Drive ativa.' : 'URL removida — modo local.','info');
-      atualizarBadge(); break;
+      salvarUrl();
+      break;
     case 'testar-sync':
       toast('Sincronizando com o Google Sheets...','info');
       Sync.pushAll();
@@ -2046,7 +1996,7 @@ $('#loginForm').addEventListener('submit', e => {
   const usr = DB.get('Usuarios').find(x => x.email.toLowerCase() === email && x.senha === senha);
   if(!usr){ $('#loginErro').textContent = 'E-mail ou senha inválidos.'; return; }
   session = { userId: usr.id };
-  localStorage.setItem('rio_session', JSON.stringify(session));
+  store.set('rio_session', JSON.stringify(session));
   $('#loginErro').textContent = '';
   iniciarApp();
   toast('Bem-vindo(a), ' + usr.nome + '!');
@@ -2056,6 +2006,7 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
 
 /* ================= BOOT ================= */
 seed();
+cleanupExemplos();
 if(currentUser()) iniciarApp(); else mostrarLogin();
 </script>
 </body>
