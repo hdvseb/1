@@ -411,7 +411,14 @@ const EMPRESA_PADRAO = {
 function getEmpresa(){ return Object.assign({}, EMPRESA_PADRAO, DB.get('Empresa')[0] || {}); }
 function setEmpresa(obj){ DB.set('Empresa', [obj]); }
 
-/* ===== PERMISSÕES ===== */
+/* ===== PERMISSÕES =====
+   NOVO MODELO:
+   - Permissões GLOBAIS do usuário valem em todas as PASTAS DA EMPRESA
+     (criadas por administradores), inclusive raiz.
+   - Pastas criadas por usuários comuns são PRIVADAS: só o dono, admins e
+     quem receber acesso em "Compartilhar" entram (subpastas herdam).
+   - "Compartilhar" em pasta da empresa serve para RESTRINGIR um usuário
+     específico (a entrada substitui as permissões globais dele nela).    */
 const PERMS_LIST = [
   {k:'visualizar',   label:'Visualizar',   ic:'fa-eye'},
   {k:'editar',       label:'Editar',       ic:'fa-pen'},
@@ -938,38 +945,51 @@ let cfgLogo = null;
 function currentUser(){ return session ? getUsuarios().find(u => u.id === session.userId) : null; }
 function ehAdmin(u){ return u && (u.papel === 'master' || u.papel === 'admin'); }
 function pastaPorId(id){ return id ? DB.get('Pastas').find(p => p.id === id) : null; }
+function ownerIsAdmin(p){
+  const o = getUsuarios().find(x => x.id === p.criadaPor);
+  return !o || ehAdmin(o);
+}
+function permsGlobais(u){ return (u.perms && u.perms.length ? u.perms : PRESETS.visualizador).slice(); }
+/* Permissões efetivas do usuário na pasta:
+   - admin: tudo; dono da pasta: tudo;
+   - pasta da empresa (criada por admin): valem as permissões globais,
+     exceto se houver entrada de compartilhamento restringindo este usuário;
+   - pasta privada de outro usuário: só com entrada de compartilhamento
+     (na própria pasta ou em ancestral), senão sem acesso. */
 function permsEff(userId, pasta){
   const u = getUsuarios().find(x => x.id === userId);
   if(!u || !pasta) return [];
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  const pastas = DB.get('Pastas');
-  const usuarios = getUsuarios();
+  const global = permsGlobais(u);
   const permRows = getPermissoes();
-  let cur = pasta, grant = null;
+  const pastas = DB.get('Pastas');
+  let cur = pasta, grant = null, blocked = false;
   while(cur){
-    if(cur.criadaPor === userId){ grant = ALL_PERMS.slice(); break; }
+    if(cur.criadaPor === userId){ grant = 'ALL'; break; }
     const e = permRows.find(p => p.pastaId === cur.id && p.userId === userId);
     if(e){ grant = e.perms || []; break; }
-    const owner = usuarios.find(x => x.id === cur.criadaPor);
-    const ownerAdmin = !owner || ehAdmin(owner);
-    if(!ownerAdmin){ grant = null; break; }
-    cur = cur.parentId ? pastas.find(p => p.id === cur.parentId) : null;
+    if(!ownerIsAdmin(cur)){ blocked = true; break; }
+    cur = pastaPorId(cur.parentId);
   }
-  if(!grant) return [];
-  const global = u.perms || PRESETS.visualizador;
-  return grant.filter(k => global.includes(k));
+  if(blocked) return [];
+  if(grant === 'ALL') return ALL_PERMS.slice();
+  if(grant) return grant.filter(k => global.includes(k));
+  return global.slice();
 }
-/* Na raiz, o usuário usa as suas permissões globais (upload/criar pasta etc.) */
 function permsAtuais(){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  if(!state.currentFolderId) return (u.perms || PRESETS.visualizador).slice();
+  if(!state.currentFolderId) return permsGlobais(u);
   return permsEff(u.id, pastaPorId(state.currentFolderId));
 }
 function permsDoc(d){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  if(!d.pastaId){ return d.criadoPor === u.id ? (u.perms || PRESETS.visualizador).slice() : []; }
+  const global = permsGlobais(u);
+  if(!d.pastaId){
+    if(d.criadoPor === u.id) return global;
+    return global.includes('visualizar') ? global : [];
+  }
   return permsEff(u.id, pastaPorId(d.pastaId));
 }
 function trilha(){
@@ -1132,7 +1152,7 @@ function renderItens(){
   let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
   if(!state.currentFolderId && !ehAdmin(u)){
     folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
-    docs = docs.filter(d => d.criadoPor === u.id);
+    docs = docs.filter(d => permsDoc(d).includes('visualizar'));
   } else if(state.currentFolderId){
     folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
   }
@@ -1162,7 +1182,7 @@ function renderItens(){
     el.className = 'itens-grid mode-' + mode;
     html = folders.map(p => {
       const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
       return '<div class="gcard" data-action="open-folder" data-id="' + p.id + '">' +
         '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
         '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + '</span>' +
@@ -1181,7 +1201,7 @@ function renderItens(){
     el.className = 'itens';
     html = folders.map(p => {
       const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
       return '<div class="lrow" data-action="open-folder" data-id="' + p.id + '">' +
         '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
         '<span class="gname">' + esc(p.nome) + '</span>' +
@@ -1199,7 +1219,7 @@ function renderItens(){
     html = folders.map(p => {
       const pv = permsEff(u.id, p);
       const dono = p.criadaPor === u.id || ehAdmin(u);
-      const privada = !ehAdmin((usuarios.find(x => x.id === p.criadaPor) || null)) && p.criadaPor !== u.id;
+      const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
       return '<div class="item-row" data-action="open-folder" data-id="' + p.id + '">' +
         '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
         '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
@@ -1224,6 +1244,8 @@ function renderItens(){
 /* ================= UPLOAD ================= */
 function handleUpload(file){
   if(!file) return;
+  const u = currentUser();
+  if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); return; }
   const ext = (file.name.includes('.') ? file.name.split('.').pop() : 'bin').toLowerCase();
   const permitidos = formatosPermitidos();
   if(!permitidos.includes(ext)){
@@ -1233,7 +1255,6 @@ function handleUpload(file){
   const reader = new FileReader();
   reader.onload = () => {
     const dataUrl = String(reader.result);
-    const u = currentUser();
     const idDoc = uid('d');
     const base = {id:idDoc, pastaId: state.currentFolderId, titulo: file.name.replace(/\.[^.]+$/,''), tipo:'arquivo', ext:ext, mime:file.type||'', criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()};
     if(salvarDocArquivo(base, dataUrl)){ toast('Arquivo enviado: ' + file.name); renderItens(); }
@@ -1244,7 +1265,7 @@ function handleUpload(file){
 /* ================= MODAIS ================= */
 function modalNovaPasta(){
   openModal('<h3><i class="fa-solid fa-folder-plus"></i> Nova pasta</h3>' +
-    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b> e também no Google Drive. Pastas criadas por você são <b>privadas</b> até serem compartilhadas.</p>' +
+    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b> e também no Google Drive. Pastas criadas por usuários comuns são <b>privadas</b> até serem compartilhadas.</p>' +
     '<label class="campo">Nome da pasta<input id="mNomePasta"></label>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-pasta"><i class="fa-solid fa-folder-plus"></i> Criar pasta</button></div>');
@@ -1387,7 +1408,7 @@ function modalCompartilhar(pastaId){
       ).join('') + '</div></div>';
   }).join('');
   openModal('<h3><i class="fa-solid fa-share-nodes"></i> Permissões da pasta</h3>' +
-    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — clique nos ícones para ligar/desligar cada permissão (subpastas herdam). "Visualizar" é obrigatório para a pasta aparecer; sem "download + imprimir" o PDF abre em visualização protegida.</p>' +
+    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — nas pastas da empresa, os usuários já usam as <b>permissões globais</b>; use esta tela para <b>restringir</b> um usuário específico ou para liberar <b>pastas privadas</b> (subpastas herdam).</p>' +
     '<div class="perm-topbar">' +
       '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="permBusca"></div>' +
       '<div class="perm-bulk">' +
@@ -1408,7 +1429,7 @@ function modalCompartilhar(pastaId){
 function modalPermsUser(userId){
   const x = getUsuarios().find(y => y.id === userId); if(!x) return;
   openModal('<h3><i class="fa-solid fa-user-shield"></i> Permissões globais — ' + esc(x.nome) + '</h3>' +
-    '<p class="modal-sub">Definem o <b>teto</b> do que o usuário pode fazer em qualquer pasta (o acesso a cada pasta é concedido em "Compartilhar").</p>' +
+    '<p class="modal-sub">Valem em <b>todas as pastas da empresa</b> (criar pasta, upload, excluir etc.). Pastas privadas de outros usuários continuam protegidas; use "Compartilhar" para liberá-las.</p>' +
     '<div class="preset-row"><button data-action="preset-perms" data-preset="visualizador">Perfil Leitor</button>' +
     '<button data-action="preset-perms" data-preset="editor">Perfil Editor</button>' +
     '<button data-action="preset-perms" data-preset="completo">Tudo liberado</button></div>' +
@@ -1504,7 +1525,7 @@ function modalNovoUsuario(){
     '<label class="campo">E-mail<input id="mEmailUser" type="email"></label>' +
     '<label class="campo">Senha<input id="mSenhaUser" type="text"></label>' +
     '<label class="campo">Papel<select id="mPapelUser"><option value="editor">Editor</option><option value="visualizador">Leitor</option><option value="admin">Administrador</option></select></label>' +
-    '<p class="modal-sub" style="margin-bottom:2px"><i class="fa-solid fa-shield-halved"></i> Permissões do usuário (ajuste à vontade):</p>' +
+    '<p class="modal-sub" style="margin-bottom:2px"><i class="fa-solid fa-shield-halved"></i> Permissões globais do usuário (valem em todas as pastas da empresa):</p>' +
     permsCheckboxes(PRESETS.editor) +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-usuario"><i class="fa-solid fa-floppy-disk"></i> Criar usuário</button></div>');
@@ -1518,7 +1539,7 @@ function renderPerfil(){
       '<span class="tag tag-admin" style="margin-top:8px;display:inline-block">' + PAPEIS[u.papel] + '</span></div></div>' +
       '<div class="sobre-texto" style="padding-top:0"><i class="fa-solid fa-shield-halved" style="color:var(--primary)"></i> Minhas permissões globais: ' +
       (ehAdmin(u) ? '<span class="tag tag-admin">Todas</span>' : icoPerms(u.perms || [])) +
-      '<br><small style="color:var(--muted)">O acesso a cada pasta é definido pelo administrador em "Compartilhar". Pastas que você cria são privadas até serem compartilhadas.</small></div>' +
+      '<br><small style="color:var(--muted)">Elas valem em todas as pastas da empresa. Pastas privadas de outros usuários só aparecem se forem compartilhadas com você.</small></div>' +
     '</section>' +
     '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-key"></i> Alterar senha</h2></div>' +
       '<div style="padding:18px 22px">' +
@@ -1530,7 +1551,7 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
-/* ===== BACKEND APPS SCRIPT (Sheets + Drive com pastas espelhadas) ===== */
+/* ===== BACKEND APPS SCRIPT ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
 ' GOOGLE APPS SCRIPT - Code.gs\n' +
@@ -1683,7 +1704,7 @@ function renderSobre(){
     '</div></div>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-solid fa-circle-info"></i> Sobre o aplicativo</h2></div>' +
-    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões granulares</b>, <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos entre pastas</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. Usuários com permissão de "criar pasta" e "upload" criam pastas e enviam arquivos diretamente para a pasta correta do Drive.</p>' +
+    '<p class="sobre-texto">Sistema de gestão de documentos com <b>permissões globais que valem em todas as pastas da empresa</b> (criar pasta, upload, excluir, editar...), <b>pastas privadas</b> espelhadas no Google Drive, <b>mover arquivos entre pastas</b>, <b>edição de DOCX/XLSX no navegador</b> e <b>digitalização pela câmera</b>. "Compartilhar" restringe usuários específicos ou libera pastas privadas.</p>' +
   '</section>' +
   '<section class="card mb"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
     '<p class="sobre-texto">A URL de implantação oficial já vem pré-configurada e <b>gravada neste navegador</b> (botão "Salvar URL" ou tecla Enter). Se o campo for limpo, a URL oficial padrão é usada automaticamente.</p>' +
@@ -1736,10 +1757,16 @@ document.addEventListener('click', e => {
       state.currentFolderId = p ? (p.parentId || null) : null;
       state.search = ''; renderDashboard(); break;
     }
-    case 'nova-pasta': modalNovaPasta(); break;
-    case 'novo-doc': modalDoc(null); break;
+    case 'nova-pasta':
+      if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
+      modalNovaPasta(); break;
+    case 'novo-doc':
+      if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
+      modalDoc(null); break;
     case 'enviar-arquivo': { const inp = $('#fileInput'); if(inp) inp.click(); break; }
-    case 'abrir-camera': modalCamera(); break;
+    case 'abrir-camera':
+      if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
+      modalCamera(); break;
     case 'cam-add': { const inp = $('#camInput'); if(inp) inp.click(); break; }
     case 'cam-gallery': { const inp = $('#camGallery'); if(inp) inp.click(); break; }
     case 'cam-remove':
@@ -1748,6 +1775,7 @@ document.addEventListener('click', e => {
       break;
     case 'cam-save-pdf': {
       if(!camPages.length){ toast('Capture ao menos uma página.','error'); break; }
+      if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
       toast('Gerando PDF…','info');
       const dataUrl = paginasParaPDF(camPages);
       const now = new Date();
@@ -1757,6 +1785,7 @@ document.addEventListener('click', e => {
     }
     case 'cam-save-imgs': {
       if(!camPages.length){ toast('Capture ao menos uma página.','error'); break; }
+      if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
       let ok = 0;
       camPages.forEach((p, i) => {
         const base = {id: uid('d'), pastaId: state.currentFolderId, titulo: 'Digitalização pág. ' + (i+1) + ' ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), tipo:'arquivo', ext:'jpg', mime:'image/jpeg', criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()};
@@ -1768,6 +1797,7 @@ document.addEventListener('click', e => {
     case 'ver-doc': modalVer(id); break;
     case 'mover-doc': {
       const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      if(!permsDoc(d).includes('editar')){ toast('Sem permissão para mover este arquivo.','error'); break; }
       modalMover(d);
       break;
     }
@@ -1786,6 +1816,7 @@ document.addEventListener('click', e => {
     }
     case 'editar-doc': {
       const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      if(!permsDoc(d).includes('editar')){ toast('Sem permissão para editar este arquivo.','error'); break; }
       const cat = categoria(d);
       if(d.tipo === 'arquivo' && cat === 'word' && window.mammoth && (d.arquivo || d.driveId)) abrirEditorWord(d);
       else if(d.tipo === 'arquivo' && cat === 'sheet' && window.XLSX && (d.arquivo || d.driveId)) abrirEditorSheet(d);
@@ -1977,6 +2008,7 @@ document.addEventListener('click', e => {
     case 'fechar-modal': fecharModal(); break;
     case 'confirmar-pendente': fecharModal(); if(acaoPendente){ const f = acaoPendente; acaoPendente = null; f(); } break;
     case 'salvar-pasta': {
+      if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
       const nome = ($('#mNomePasta') || {}).value;
       if(!nome || !nome.trim()){ toast('Informe o nome da pasta.','error'); return; }
       const pastas = DB.get('Pastas');
@@ -1998,6 +2030,7 @@ document.addEventListener('click', e => {
           toast('Documento atualizado.');
         }
       } else {
+        if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
         const conteudo = ($('#mConteudo') || {}).value;
         docs.push({id: uid('d'), pastaId: state.currentFolderId, titulo:titulo, tipo:'texto', conteudo:conteudo, criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()});
         DB.set('Documentos', docs);
