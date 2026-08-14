@@ -56,7 +56,7 @@ button{font-family:inherit}
 .topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
 .topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:14px}
-.user-hello{color:var(--heading);font-weight:700}
+.user-hello{color:var(--heading);font-weight:700;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .menu-toggle{display:none;border:none;background:none;font-size:20px;color:var(--primary);cursor:pointer}
 .sync{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;border-radius:999px;padding:5px 11px}
 .sync i{font-size:7px}
@@ -286,7 +286,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
   .sidebar.open{transform:none}
   .main{padding:20px 16px}
   .grid-2,.cfg-cols,.perm-grid{grid-template-columns:1fr}
-  .user-hello{display:none}
+  #syncBadge{display:none}
 }
 @media(max-width:700px){
   .topbar{padding:0 12px;gap:8px;height:58px}
@@ -2249,8 +2249,14 @@ document.addEventListener('click', e => {
       renderDashboard();
       break;
     }
-    case 'logout':
-      session = null; store.set('rio_session',''); mostrarLogin(); buscarDadosLogin(); break;
+    case 'logout': {
+      session = null; store.set('rio_session','');
+      mostrarLogin(); buscarDadosLogin();
+      const lf = $('#loginForm'); if(lf) lf.reset();
+      const le = $('#loginErro'); if(le) le.textContent = '';
+      const lst = $('#loginStatus'); if(lst){ lst.innerHTML = ''; lst.classList.add('hidden'); }
+      break;
+    }
     case 'nav':
       navigate(el.dataset.view);
       break;
