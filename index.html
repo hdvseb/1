@@ -328,7 +328,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
   <div class="login-card">
     <img id="loginLogo" alt="Logotipo" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='220'%20height='90'%3E%3Crect%20width='220'%20height='90'%20rx='12'%20fill='%23eef2f7'/%3E%3Crect%20x='88'%20y='16'%20width='44'%20height='56'%20rx='6'%20fill='%231552c2'/%3E%3Crect%20x='96'%20y='28'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='38'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='48'%20width='20'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3C/svg%3E">
     <h1>Gestão de Documentos</h1>
-    <div id="loginStatus" class="login-status"><i class="fa-solid fa-spinner fa-spin"></i> Conectando à planilha…</div>
+    <div id="loginStatus" class="login-status hidden"></div>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
         <input id="loginEmail" type="email" required>
@@ -339,7 +339,6 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <div id="loginErro" class="erro"></div>
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
-    <button id="btnBuscar" class="btn btn-light btn-block hidden" style="margin-top:10px" data-action="buscar-dados"><i class="fa-solid fa-rotate"></i> Buscar dados da planilha</button>
   </div>
 </div>
 
@@ -406,21 +405,26 @@ function parseCsv_(text){
    a linha com chave "GAS_URL" para descobrir a URL de integração automaticamente.
    Assim, se a implantação do Apps Script mudar, basta editar essa célula na planilha. */
 async function buscarSettingsPlanilha(){
-  try{
-    const url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/gviz/tq?tqx=out:csv&sheet=Settings';
-    const r = await fetch(url);
-    if(!r.ok) return null;
-    const txt = await r.text();
-    const rows = parseCsv_(txt);
-    let start = 0;
-    if(rows.length && String(rows[0][0] || '').trim().toLowerCase() === 'chave') start = 1;
-    for(let i=start;i<rows.length;i++){
-      const chave = (rows[i][0] || '').trim().toLowerCase();
-      const valor = (rows[i][1] || '').trim();
-      if(chave === 'gas_url' && valor) return valor;
-    }
-    return null;
-  }catch(e){ return null; }
+  const nomesTentativa = ['Settings','settings','SETTINGS','Configuracoes','Configurações'];
+  for(const nome of nomesTentativa){
+    try{
+      const url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(nome);
+      const r = await fetch(url);
+      if(!r.ok) continue;
+      const txt = await r.text();
+      if(!txt || !txt.trim()) continue;
+      const rows = parseCsv_(txt);
+      if(!rows.length) continue;
+      let start = 0;
+      if(String(rows[0][0] || '').trim().toLowerCase() === 'chave') start = 1;
+      for(let i=start;i<rows.length;i++){
+        const chave = (rows[i][0] || '').trim().toLowerCase();
+        const valor = (rows[i][1] || '').trim();
+        if(chave === 'gas_url' && valor) return valor;
+      }
+    }catch(e){ /* tenta o próximo nome */ }
+  }
+  return null;
 }
 const store = {
   _m: {},
@@ -652,10 +656,8 @@ function adotarDados(data){
 /* Busca os dados da planilha para a tela de login (logotipo, empresa, usuários). */
 function buscarDadosLogin(){
   const st = $('#loginStatus');
-  const btn = $('#btnBuscar');
-  const setStatus = (html, cls) => { if(st){ st.innerHTML = html; st.className = 'login-status' + (cls ? ' ' + cls : ''); } };
-  setStatus('<i class="fa-solid fa-spinner fa-spin"></i> Conectando à planilha…');
-  if(btn) btn.classList.add('hidden');
+  const setStatus = (html) => { if(st){ st.innerHTML = html; st.className = 'login-status erro'; st.classList.remove('hidden'); } };
+  const limparStatus = () => { if(st){ st.innerHTML = ''; st.classList.add('hidden'); } };
   Sync.ensureDriveRoot();
   Sync.pull().then(data => {
     if(data && typeof data === 'object'){
@@ -663,20 +665,18 @@ function buscarDadosLogin(){
       backendAntigo = v < APP_VERSAO;
       Sync.applyData(data);
       if(Array.isArray(data.Usuarios) && data.Usuarios.length){
-        setStatus('<i class="fa-solid fa-circle-check"></i> Dados da planilha carregados.', 'ok');
+        limparStatus();
       } else {
-        setStatus('<i class="fa-solid fa-circle-exclamation"></i> A planilha ainda não tem nenhum usuário cadastrado na aba "Usuarios".', 'erro');
+        setStatus('<i class="fa-solid fa-circle-exclamation"></i> A planilha ainda não tem nenhum usuário cadastrado na aba "Usuarios".');
       }
       if(backendAntigo) toast('Backend Apps Script desatualizado: publique a NOVA VERSÃO da implantação (versão ' + APP_VERSAO + ').','error');
     } else {
-      setStatus('<i class="fa-solid fa-circle-exclamation"></i> Resposta inválida da planilha.', 'erro');
+      setStatus('<i class="fa-solid fa-circle-exclamation"></i> Resposta inválida da planilha.');
     }
     aplicarMarca(); mostrarLogin();
-    if(btn) btn.classList.remove('hidden');
   }).catch(() => {
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique sua conexão com a internet ou a URL em "Sobre".', 'erro');
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique sua conexão com a internet ou a URL em "Sobre".');
     aplicarMarca(); mostrarLogin();
-    if(btn) btn.classList.remove('hidden');
   });
 }
 /* Sincronização periódica com o app logado. */
@@ -1968,7 +1968,6 @@ document.addEventListener('click', e => {
   const id = el.dataset.id || null;
 
   if(a === 'recarregar'){ location.reload(); return; }
-  if(a === 'buscar-dados'){ buscarDadosLogin(); return; }
 
   const u = currentUser();
   if(!u) return;
