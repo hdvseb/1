@@ -119,6 +119,14 @@ button{font-family:inherit}
 .item-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chev{color:#b6c4dd;font-size:12px}
 .item-row[data-action="open-folder"],.lrow[data-action="open-folder"]{cursor:pointer}
+.sel-chk{width:18px;height:18px;flex:0 0 18px;cursor:pointer;accent-color:var(--primary)}
+.item-row.sel-row,.lrow.sel-row{background:#eaf2ff}
+.gcard{position:relative}
+.gcard .sel-chk{position:absolute;top:8px;left:8px;z-index:2}
+.gcard.sel-row{box-shadow:0 0 0 2px var(--primary) inset}
+.sel-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 22px;background:#eaf2ff;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.sel-bar .sel-count{font-weight:700;color:var(--primary);font-size:13.5px;display:flex;align-items:center;gap:6px;margin-right:auto}
+
 .itens-grid{display:grid;gap:12px;padding:12px 16px 18px}
 .mode-xg{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .mode-g{grid-template-columns:repeat(auto-fill,minmax(168px,1fr))}
@@ -1108,6 +1116,18 @@ function modalMover(d){
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="confirmar-mover" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
 }
+function modalMoverMultiplo(ids){
+  const u = currentUser();
+  const destinos = DB.get('Pastas').filter(p => permsEff(u.id, p).includes('upload'));
+  const opts = (ehAdmin(u) ? '<option value="">Raiz</option>' : '') +
+    destinos.map(p => '<option value="' + p.id + '">' + esc(nomeCaminho(p)) + '</option>').join('');
+  if(!opts){ toast('Nenhuma pasta de destino com permissão de upload.','error'); return; }
+  openModal('<h3><i class="fa-solid fa-folder-tree"></i> Mover arquivos selecionados</h3>' +
+    '<p class="modal-sub"><b>' + ids.length + ' arquivo(s)</b> selecionado(s) — escolha a pasta de destino. A movimentação também será aplicada no Google Drive.</p>' +
+    '<label class="campo">Pasta de destino<select id="moverDestMulti">' + opts + '</select></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="confirmar-mover-multi"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
+}
 
 /* ===== VISUALIZAÇÃO PROTEGIDA DE PDF ===== */
 let bloqueioAtivo = false;
@@ -1197,7 +1217,7 @@ function migrateDados(){
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
 try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
-const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:viewModeDefault() };
+const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:viewModeDefault(), selecaoAtiva:false, selecao:new Set() };
 const VIEW_MODES = [
   {m:'xg',       label:'Ícones extra grandes', ic:'fa-table-cells-large'},
   {m:'g',        label:'Ícones grandes',       ic:'fa-table-cells'},
@@ -1334,6 +1354,7 @@ function iniciarApp(){
 function navigate(view){
   state.view = view;
   state.search = '';
+  limparSelecao();
   $('#sidebar').classList.remove('open');
   renderApp();
 }
@@ -1431,15 +1452,17 @@ function renderDashboard(){
             '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
               '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
             ).join('') + '</div></div>' +
+          '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
           '<button class="btn btn-light" data-action="voltar" ' + (state.currentFolderId ? '' : 'disabled') + '><i class="fa-solid fa-arrow-left"></i> Voltar</button>' +
         '</div>' +
       '</div>' +
+      '<div id="selBar"></div>' +
       '<input type="file" id="fileInput" accept="' + esc(acceptString()) + '" multiple class="hidden">' +
       '<div class="breadcrumb" id="breadcrumb"></div>' +
       '<div id="itens"></div>' +
     '</section>' +
   '</div>';
-  renderTrilha(); renderItens();
+  renderTrilha(); renderItens(); renderSelBar();
   const si = $('#searchInput');
   if(si) si.addEventListener('input', e => { state.search = e.target.value; renderItens(); });
 }
@@ -1450,6 +1473,22 @@ function renderTrilha(){
     '<i class="fa-solid fa-chevron-right sep"></i><button class="crumb ' + (p.id === state.currentFolderId ? 'active' : '') + '" data-action="goto" data-id="' + p.id + '">' + esc(p.nome) + '</button>'
   ).join('');
   el.innerHTML = html;
+}
+/* ===== SELEÇÃO MÚLTIPLA (mover/excluir vários itens de uma vez) ===== */
+function selKey(tipo, id){ return tipo + ':' + id; }
+function limparSelecao(){ state.selecao.clear(); state.selecaoAtiva = false; }
+function renderSelBar(){
+  const el = $('#selBar'); if(!el) return;
+  const n = state.selecao.size;
+  if(!state.selecaoAtiva || !n){ el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const temDoc = [...state.selecao].some(k => k.indexOf('doc:') === 0);
+  el.innerHTML = '<div class="sel-bar">' +
+    '<span class="sel-count"><i class="fa-solid fa-check-double"></i> ' + n + ' selecionado' + (n>1?'s':'') + '</span>' +
+    (temDoc ? '<button class="btn btn-light" data-action="mover-selecionados"><i class="fa-solid fa-folder-tree"></i> Mover</button>' : '') +
+    '<button class="btn btn-danger" data-action="excluir-selecionados"><i class="fa-solid fa-trash-can"></i> Excluir</button>' +
+    '<button class="btn btn-light" data-action="limpar-selecao"><i class="fa-solid fa-xmark"></i> Limpar seleção</button>' +
+  '</div>';
 }
 function btnBaixar(d, permitido){
   return permitido
@@ -1489,6 +1528,9 @@ function renderItens(){
       (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
       (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
       (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+    const chk = (tipo, itemId) => !state.selecaoAtiva ? '' :
+      '<input type="checkbox" class="sel-chk" data-action="toggle-sel" data-tipo="' + tipo + '" data-id="' + itemId + '" ' + (state.selecao.has(selKey(tipo, itemId)) ? 'checked' : '') + '>';
+    const selCls = (tipo, itemId) => state.selecaoAtiva && state.selecao.has(selKey(tipo, itemId)) ? ' sel-row' : '';
 
     let html = '';
     if(grid){
@@ -1496,7 +1538,8 @@ function renderItens(){
       html = folders.map(p => {
         const dono = p.criadaPor === u.id || ehAdmin(u);
         const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-        return '<div class="gcard" data-action="open-folder" data-id="' + p.id + '">' +
+        return '<div class="gcard' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
+          chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
           '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + '</span>' +
           '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</span>' +
@@ -1504,7 +1547,8 @@ function renderItens(){
       }).join('') +
       docs.map(d => {
         const ci = catInfo(d); const pd = permsDoc(d);
-        return '<div class="gcard">' +
+        return '<div class="gcard' + selCls('doc', d.id) + '">' +
+          chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
           '<span class="gname" title="' + esc(d.titulo) + '">' + esc(d.titulo) + '</span>' +
           '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') + '</span>' +
@@ -1515,14 +1559,16 @@ function renderItens(){
       html = folders.map(p => {
         const dono = p.criadaPor === u.id || ehAdmin(u);
         const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-        return '<div class="lrow" data-action="open-folder" data-id="' + p.id + '">' +
+        return '<div class="lrow' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
+          chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
           '<span class="gname">' + esc(p.nome) + '</span>' +
           '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
       }).join('') +
       docs.map(d => {
         const ci = catInfo(d); const pd = permsDoc(d);
-        return '<div class="lrow">' +
+        return '<div class="lrow' + selCls('doc', d.id) + '">' +
+          chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
           '<span class="gname">' + esc(d.titulo) + '</span>' +
           '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
@@ -1533,7 +1579,8 @@ function renderItens(){
         const pv = permsEff(u.id, p);
         const dono = p.criadaPor === u.id || ehAdmin(u);
         const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
-        return '<div class="item-row" data-action="open-folder" data-id="' + p.id + '">' +
+        return '<div class="item-row' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
+          chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
           '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
           (dono ? '<span class="tag tag-admin">Controle total</span>' : '<span class="tag tag-arq">' + icoPerms(pv) + '</span>') +
@@ -1543,7 +1590,8 @@ function renderItens(){
         const ci = catInfo(d);
         const pd = permsDoc(d);
         const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
-        return '<div class="item-row">' +
+        return '<div class="item-row' + selCls('doc', d.id) + '">' +
+          chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
           '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '') + '</small></div>' +
           '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
@@ -2278,13 +2326,104 @@ document.addEventListener('click', e => {
       renderDashboard();
       break;
     case 'open-folder':
-      state.currentFolderId = id; state.search = ''; renderDashboard(); break;
+      limparSelecao(); state.currentFolderId = id; state.search = ''; renderDashboard(); break;
     case 'goto':
-      state.currentFolderId = id || null; state.search = ''; renderDashboard(); break;
+      limparSelecao(); state.currentFolderId = id || null; state.search = ''; renderDashboard(); break;
     case 'voltar': {
+      limparSelecao();
       const p = pastaPorId(state.currentFolderId);
       state.currentFolderId = p ? (p.parentId || null) : null;
       state.search = ''; renderDashboard(); break;
+    }
+    case 'toggle-modo-selecao':
+      state.selecaoAtiva = !state.selecaoAtiva;
+      if(!state.selecaoAtiva) state.selecao.clear();
+      renderDashboard();
+      break;
+    case 'toggle-sel': {
+      const tipo = el.dataset.tipo, tid = el.dataset.id;
+      const key = selKey(tipo, tid);
+      if(el.checked) state.selecao.add(key); else state.selecao.delete(key);
+      const row = el.closest('.lrow,.item-row,.gcard');
+      if(row) row.classList.toggle('sel-row', el.checked);
+      renderSelBar();
+      break;
+    }
+    case 'limpar-selecao':
+      state.selecao.clear();
+      renderItens(); renderSelBar();
+      break;
+    case 'mover-selecionados': {
+      const idsMulti = [...state.selecao].filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
+      if(!idsMulti.length){ toast('Nenhum arquivo selecionado para mover.','info'); break; }
+      modalMoverMultiplo(idsMulti);
+      break;
+    }
+    case 'confirmar-mover-multi': {
+      const dest = ($('#moverDestMulti') || {}).value;
+      const destId = dest === '' ? null : dest;
+      const alvo = destId ? pastaPorId(destId) : null;
+      if(destId && !permsEff(u.id, alvo).includes('upload')){ toast('Sem permissão de upload na pasta de destino.','error'); break; }
+      const idsMulti = [...state.selecao].filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
+      let movidos = 0, semPermissao = 0, jaLa = 0;
+      const docsAtuais = DB.get('Documentos');
+      const atualizados = docsAtuais.map(x => {
+        if(idsMulti.indexOf(x.id) === -1) return x;
+        if(!permsDoc(x).includes('editar')){ semPermissao++; return x; }
+        if((x.pastaId || null) === (destId || null)){ jaLa++; return x; }
+        movidos++;
+        return Object.assign({}, x, {pastaId: destId, movePending: true, atualizadoEm: Date.now()});
+      });
+      DB.set('Documentos', atualizados);
+      fecharModal();
+      limparSelecao();
+      let msg = movidos + ' arquivo(s) movido(s) para "' + (alvo ? alvo.nome : 'Raiz') + '".';
+      if(semPermissao) msg += ' ' + semPermissao + ' sem permissão.';
+      if(jaLa) msg += ' ' + jaLa + ' já estavam nesta pasta.';
+      toast(msg + (movidos ? ' Sincronizando no Drive…' : ''));
+      renderDashboard();
+      break;
+    }
+    case 'excluir-selecionados': {
+      const keys = [...state.selecao];
+      const docIdsSel = keys.filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
+      const pastaIdsSel = keys.filter(k => k.indexOf('pasta:') === 0).map(k => k.slice(6));
+      if(!docIdsSel.length && !pastaIdsSel.length){ toast('Nada selecionado.','info'); break; }
+      const partes = [];
+      if(pastaIdsSel.length) partes.push(pastaIdsSel.length + ' pasta' + (pastaIdsSel.length > 1 ? 's' : ''));
+      if(docIdsSel.length) partes.push(docIdsSel.length + ' arquivo' + (docIdsSel.length > 1 ? 's' : ''));
+      modalConfirm('Excluir selecionados', 'Excluir definitivamente ' + partes.join(' e ') + '? Pastas são excluídas com todo o conteúdo, inclusive no Google Drive.', () => {
+        const permsCtx = permsAtuais();
+        let pastasOk = 0, pastasNeg = 0;
+        pastaIdsSel.forEach(pid => {
+          const p = pastaPorId(pid); if(!p) return;
+          const dono = p.criadaPor === u.id || ehAdmin(u);
+          if(!dono && !permsCtx.includes('excluir_pasta')){ pastasNeg++; return; }
+          if(p.driveFolderId) Sync.excluirDrive('pasta', p.driveFolderId, p.nome, p.criadaPor);
+          excluirPastaRec(pid);
+          if(state.currentFolderId === pid) state.currentFolderId = null;
+          pastasOk++;
+        });
+        let docsOk = 0, docsNeg = 0;
+        docIdsSel.forEach(did => {
+          const d = DB.get('Documentos').find(x => x.id === did); if(!d) return;
+          if(!permsDoc(d).includes('excluir')){ docsNeg++; return; }
+          marcarExcluido_('Documentos', did);
+          if(d.driveId) Sync.excluirDrive('arquivo', d.driveId, d.titulo);
+          DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== did));
+          delete pendingArquivos[did];
+          docsOk++;
+        });
+        limparSelecao();
+        const resumo = [];
+        if(pastasOk) resumo.push(pastasOk + ' pasta(s) excluída(s)');
+        if(docsOk) resumo.push(docsOk + ' arquivo(s) excluído(s)');
+        const negadas = pastasNeg + docsNeg;
+        if(negadas) resumo.push(negadas + ' sem permissão');
+        toast(resumo.join(', ') || 'Nada foi excluído.', (pastasOk || docsOk) ? 'success' : 'error');
+        renderDashboard();
+      });
+      break;
     }
     case 'nova-pasta':
       if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
