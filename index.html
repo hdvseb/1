@@ -92,6 +92,8 @@ button{font-family:inherit}
 .vm-item.active{background:#e3edff;color:var(--primary)}
 .vm-item i{width:18px;text-align:center;color:var(--primary)}
 .breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 22px 14px;font-size:13px}
+.breadcrumb-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:0 22px 14px}
+.breadcrumb-row .breadcrumb{padding:0}
 .crumb{border:none;background:none;color:var(--primary);font-weight:600;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:6px}
 .crumb:hover{background:#eaf2ff}
 .crumb.active{color:var(--muted);cursor:default;background:none}
@@ -309,6 +311,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
   .search-box{min-width:0;width:100%;flex-basis:100%}
   .toolbar-actions{margin-left:0;width:100%;justify-content:flex-end}
   .breadcrumb{padding:0 14px 10px}
+  .breadcrumb-row{padding:0 14px 10px}
   .itens,.itens-grid{padding:8px 8px 14px}
   .btn{padding:9px 12px;font-size:13px}
   .modal-overlay{padding:10px}
@@ -1438,7 +1441,7 @@ function renderDashboard(){
   '<div class="view">' +
     '<h1 class="page-title">Dashboard</h1>' +
     '<section class="card">' +
-      '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Minhas Pastas' +
+      '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Pastas' +
         (state.currentFolderId ? ' <span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
         '</h2>' +
         '<div class="card-head-right">' +
@@ -1451,18 +1454,18 @@ function renderDashboard(){
           '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
             '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
           ).join('') + '</div></div>' +
+        '<button class="btn-ic" data-action="voltar" title="Voltar" ' + (state.currentFolderId ? '' : 'disabled') + '><i class="fa-solid fa-arrow-left"></i></button>' +
         '</div>' +
       '</div>' +
       '<div class="toolbar">' +
         '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" value="' + esc(state.search) + '"></div>' +
-        '<div class="toolbar-actions">' +
-          '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
-          '<button class="btn btn-light" data-action="voltar" ' + (state.currentFolderId ? '' : 'disabled') + '><i class="fa-solid fa-arrow-left"></i> Voltar</button>' +
-        '</div>' +
       '</div>' +
       '<div id="selBar"></div>' +
       '<input type="file" id="fileInput" accept="' + esc(acceptString()) + '" multiple class="hidden">' +
-      '<div class="breadcrumb" id="breadcrumb"></div>' +
+      '<div class="breadcrumb-row">' +
+        '<div class="breadcrumb" id="breadcrumb"></div>' +
+        '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
+      '</div>' +
       '<div id="itens"></div>' +
     '</section>' +
   '</div>';
