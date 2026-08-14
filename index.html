@@ -1197,7 +1197,7 @@ function migrateDados(){
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
 try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
-const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:'detalhes' };
+const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:viewModeDefault() };
 const VIEW_MODES = [
   {m:'xg',       label:'Ícones extra grandes', ic:'fa-table-cells-large'},
   {m:'g',        label:'Ícones grandes',       ic:'fa-table-cells'},
@@ -1208,6 +1208,12 @@ const VIEW_MODES = [
 ];
 let currentBlobUrl = null;
 let cfgLogo = null;
+/* Modo de visualização padrão: Lista no celular, Detalhes no computador. */
+function ehMobile(){
+  return window.matchMedia('(max-width:700px)').matches ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+}
+function viewModeDefault(){ return ehMobile() ? 'lista' : 'detalhes'; }
 
 function currentUser(){ return session ? getUsuarios().find(u => u.id === session.userId) : null; }
 function ehAdmin(u){ return u && (u.papel === 'master' || u.papel === 'admin'); }
@@ -1312,13 +1318,13 @@ function mostrarLogin(){
   $('#app').classList.add('hidden');
   $('#loginScreen').classList.remove('hidden');
   state.view = 'dashboard'; state.currentFolderId = null; state.search = '';
-  state.viewMode = 'detalhes';
+  state.viewMode = viewModeDefault();
   aplicarMarca();
 }
 function iniciarApp(){
   $('#loginScreen').classList.add('hidden');
   $('#app').classList.remove('hidden');
-  state.viewMode = 'detalhes';
+  state.viewMode = viewModeDefault();
   state.view = 'dashboard';
   renderApp();
   if(backendAntigo) modalBackendAntigo();
@@ -1416,8 +1422,7 @@ function renderDashboard(){
         '<div class="toolbar-actions">' +
           (perms.includes('criar_pasta') ? '<button class="btn btn-light" data-action="nova-pasta"><i class="fa-solid fa-folder-plus"></i> Nova Pasta</button>' : '') +
           (perms.includes('upload')
-            ? '<button class="btn btn-light" data-action="novo-doc"><i class="fa-solid fa-file-pen"></i> Novo Documento</button>' +
-              '<button class="btn btn-light" data-action="abrir-camera" title="Digitalizar com a câmera do celular"><i class="fa-solid fa-camera"></i> Câmera</button>' +
+            ? '<button class="btn btn-light" data-action="abrir-camera" title="Digitalizar com a câmera do celular"><i class="fa-solid fa-camera"></i> Câmera</button>' +
               '<button class="btn btn-primary" data-action="enviar-arquivo" title="Formatos permitidos: ' + esc(formatosPermitidos().join(', ')) + '"><i class="fa-solid fa-upload"></i> Enviar Arquivo</button>'
             : '') +
           '<div class="viewmenu"><button class="btn btn-light" data-action="menu-view" title="Modo de visualização: ' + vm.label + '"><i class="fa-solid ' + vm.ic + '"></i> Visualizar</button>' +
@@ -1848,7 +1853,8 @@ function renderPerfil(){
   '<div class="grid-2">' +
     '<section class="card"><div class="perfil-top"><span class="avatar-lg">' + iniciais(u.nome) + '</span>' +
       '<div><div class="perfil-nome">' + esc(u.nome) + '</div><small style="color:var(--muted)">' + esc(u.email) + '</small><br>' +
-      '<span class="tag tag-admin" style="margin-top:8px;display:inline-block">' + PAPEIS[u.papel] + '</span></div></div>' +
+      '<span class="tag tag-admin" style="margin-top:8px;display:inline-block">' + PAPEIS[u.papel] + '</span></div>' +
+      '<button class="btn btn-light" style="margin-left:auto" data-action="editar-usuario" data-id="' + u.id + '"><i class="fa-solid fa-user-pen"></i> Editar meus dados</button></div>' +
       '<div class="sobre-texto" style="padding-top:0"><i class="fa-solid fa-shield-halved" style="color:var(--primary)"></i> Minhas permissões globais: ' +
       (ehAdmin(u) ? '<span class="tag tag-admin">Todas</span>' : icoPerms(u.perms || [])) +
       '<br><small style="color:var(--muted)">Elas valem em todas as pastas da empresa. Pastas privadas de outros usuários só aparecem se forem compartilhadas com você.</small></div>' +
@@ -2674,7 +2680,6 @@ $('#loginForm').addEventListener('submit', e => {
   if(tenta()) return;
   $('#loginErro').textContent = '';
   const st = $('#loginStatus');
-  if(st){ st.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verificando usuários na planilha…'; st.className = 'login-status'; }
   Sync.pull().then(data => {
     if(data && typeof data === 'object') Sync.applyData(data);
     aplicarMarca(); mostrarLogin();
