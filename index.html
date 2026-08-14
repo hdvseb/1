@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 5;
+const APP_VERSAO = 7;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 let settingsGasUrl = null;
@@ -669,6 +669,14 @@ const Sync = {
     const url = this.url(); if(!url || !driveId) return;
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify(corpoComUsuario_({acao:'excluirDrive', tipo:tipo, driveId:driveId, nome:nome, criadaPor:criadaPor}))}).catch(()=>{});
+  },
+  /* Pede ao backend para apagar todo o histórico da aba "Excluidos" da
+     planilha. O servidor confere se quem pediu é administrador antes de
+     efetivar (ver Code.gs) — o cliente só limpa o espelho local em seguida. */
+  limparExcluidos(){
+    const url = this.url(); if(!url) return;
+    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_({acao:'limparExcluidos'}))}).catch(()=>{});
   },
   /* ITEM 7: pede ao backend a lista de pastas/arquivos que existem no Drive
      mas ainda não estão cadastrados na planilha. Só o backend confirma que
@@ -1934,7 +1942,11 @@ function renderPerfil(){
    Drive) — mostramos aqui data/hora, usuário e o que foi excluído. */
 function renderExcluidos(){
   const registros = DB.get('Excluidos').slice().sort((a,b) => new Date(b.data_hora) - new Date(a.data_hora));
-  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Excluídos</h1>' +
+  $('#viewRoot').innerHTML = '<div class="view">' +
+  '<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">' +
+    '<span>Excluídos</span>' +
+    (registros.length ? '<button class="btn btn-danger" data-action="limpar-excluidos" style="font-size:13px;padding:8px 14px"><i class="fa-solid fa-broom"></i> Limpar excluídos</button>' : '') +
+  '</div>' +
   '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-trash-can"></i> Histórico de exclusões</h2></div>' +
   '<p class="sobre-texto" style="padding:12px 22px 0">Registro de todo arquivo ou pasta apagado do Google Drive, com data/hora e quem fez a exclusão.</p>' +
   (registros.length
@@ -1949,10 +1961,10 @@ function renderExcluidos(){
     : '<p class="sobre-texto" style="padding:0 22px 20px">Nenhuma exclusão registrada ainda.</p>') +
   '</section></div>';
 }
-/* ===== BACKEND APPS SCRIPT (VERSAO 5 - JSONP) ===== */
+/* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 6)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 7)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn) para a tela\n' +
 '   de login buscar dados/logotipo mesmo sem CORS.\n' +
@@ -1963,10 +1975,12 @@ const SCRIPT_GAS =
 '   aba Excluidos com o historico de exclusoes.\n' +
 ' - Endpoint escanearPendentes: acha no Drive pastas e\n' +
 '   arquivos que ainda nao estao na planilha (uso admin).\n' +
+' - Endpoint limparExcluidos: apaga o historico da aba\n' +
+'   Excluidos (uso admin, via botao "Limpar excluidos").\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n\n' +
-'var VERSAO = 6;\n' +
+'var VERSAO = 7;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2177,6 +2191,18 @@ const SCRIPT_GAS =
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
 '\n' +
+'    if (body.acao === "limparExcluidos"){\n' +
+'      if (!ehAdmin_(solicitante)){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var shExc = folha_("Excluidos");\n' +
+'      var lastExc = shExc.getLastRow();\n' +
+'      if (lastExc > 1){ shExc.getRange(2,1,lastExc-1,shExc.getLastColumn()).clearContent(); }\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
 '    if (body.acao === "excluirDrive"){\n' +
 '      // ITENS 2/3: antes, qualquer chamador podia mandar excluir qualquer\n' +
 '      // driveId. Agora exigimos que o usuário seja admin, tenha a permissão\n' +
@@ -2263,7 +2289,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 5</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 7</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2757,6 +2783,14 @@ document.addEventListener('click', e => {
         DB.set('Usuarios', DB.get('Usuarios').filter(y => y.id !== id));
         DB.set('Permissoes', DB.get('Permissoes').filter(p => p.userId !== id));
         toast('Usuário excluído.'); renderUsuarios();
+      }); break;
+    }
+    case 'limpar-excluidos': {
+      if(!ehAdmin(u)){ toast('Apenas administradores podem limpar o histórico.','error'); break; }
+      modalConfirm('Limpar excluídos', 'Apagar definitivamente todo o histórico de exclusões? Isso não afeta os arquivos/pastas em si, apenas este registro.', () => {
+        guardarFolhaSeguro('Excluidos', []);
+        Sync.limparExcluidos();
+        toast('Histórico de exclusões limpo.'); renderExcluidos();
       }); break;
     }
     case 'salvar-senha': {
