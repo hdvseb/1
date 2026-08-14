@@ -2711,7 +2711,12 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
    Primeiro tenta descobrir a URL do Apps Script pela aba "Settings" da planilha
    (chave GAS_URL). Se não conseguir, usa a URL padrão embutida no código.
    Sempre busca os dados da planilha ao abrir (logotipo, empresa, usuários).
-   O login só funciona com usuários reais cadastrados na aba "Usuarios". */
+   O login só funciona com usuários reais cadastrados na aba "Usuarios".
+   Aplica a marca (logotipo/nome) de imediato, de forma síncrona, usando o
+   que já estiver salvo localmente — evita o "flash" do ícone genérico
+   enquanto aguarda as chamadas de rede (buscarSettingsPlanilha/Sync.pull)
+   para só então trocar pelo logotipo real. */
+aplicarMarca();
 buscarSettingsPlanilha().then(u => { settingsGasUrl = u; }).catch(() => {}).finally(() => {
   try{
     seed();
