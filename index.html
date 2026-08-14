@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 7;
+const APP_VERSAO = 8;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 let settingsGasUrl = null;
@@ -617,6 +617,17 @@ let backendAntigo = false;
    causa da duplicação de arquivos no Google Drive: o servidor recebia o mesmo
    conteúdo de novo, sem driveId, e criava outro arquivo. */
 const enviandoArquivos = new Set();
+/* CORREÇÃO (item 8): antes, cada Sync.push disparava um fetch imediatamente,
+   sem esperar o anterior da mesma aba terminar. Se duas chamadas (ex.: dois
+   uploads seguidos, ou um upload + qualquer outra edição em "Documentos")
+   saíssem quase juntas, a ordem de chegada no servidor não era garantida —
+   e o push mais "atrasado" podia sobrescrever no Sheets o resultado do mais
+   recente (perdendo driveId de um upload que já tinha terminado no Drive).
+   Agora enfileiramos os pushes por aba: o próximo só é enviado depois que o
+   anterior da mesma aba retornar, o que evita essa inversão de ordem. Isso é
+   um reforço no cliente — a correção definitiva (merge por id) está no
+   servidor, no Code.gs, para o caso de a rede ainda assim reordenar algo. */
+const filaPush_ = {};
 function corpoComUsuario_(extra){
   const u = currentUser();
   return Object.assign({userId: u ? u.id : '', userNome: u ? u.nome : ''}, extra);
@@ -652,8 +663,11 @@ const Sync = {
         const c = Object.assign({}, r); delete c.arquivo; return c;
       });
     }
-    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(corpoComUsuario_({folha:f, rows:out}))}).catch(()=>{});
+    const body = JSON.stringify(corpoComUsuario_({folha:f, rows:out}));
+    const anterior = filaPush_[f] || Promise.resolve();
+    filaPush_[f] = anterior.then(() =>
+      fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body}).catch(()=>{})
+    );
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
@@ -1986,7 +2000,7 @@ function renderExcluidos(){
 /* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 7)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 8)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn) para a tela\n' +
 '   de login buscar dados/logotipo mesmo sem CORS.\n' +
@@ -1999,10 +2013,15 @@ const SCRIPT_GAS =
 '   arquivos que ainda nao estao na planilha (uso admin).\n' +
 ' - Endpoint limparExcluidos: apaga o historico da aba\n' +
 '   Excluidos (uso admin, via botao "Limpar excluidos").\n' +
+' - Escritas em qualquer aba fazem merge por "id" com o\n' +
+'   que ja existe na planilha, em vez de sobrescrever a\n' +
+'   linha inteira - evita que um push atrasado apague\n' +
+'   campos (ex.: driveId) que outro push mais recente ja\n' +
+'   tinha gravado (ver Documentos).\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
-'=====================================================\n\n' +
-'var VERSAO = 7;\n' +
+'=====================================================\n' +
+'var VERSAO = 8;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2213,18 +2232,6 @@ const SCRIPT_GAS =
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
 '\n' +
-'    if (body.acao === "limparExcluidos"){\n' +
-'      if (!ehAdmin_(solicitante)){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      var shExc = folha_("Excluidos");\n' +
-'      var lastExc = shExc.getLastRow();\n' +
-'      if (lastExc > 1){ shExc.getRange(2,1,lastExc-1,shExc.getLastColumn()).clearContent(); }\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
-'\n' +
 '    if (body.acao === "excluirDrive"){\n' +
 '      // ITENS 2/3: antes, qualquer chamador podia mandar excluir qualquer\n' +
 '      // driveId. Agora exigimos que o usuário seja admin, tenha a permissão\n' +
@@ -2259,7 +2266,26 @@ const SCRIPT_GAS =
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
 '\n' +
-'    var rows = body.rows || [];\n' +
+'    // CORREÇÃO (item 8): antes, cada push sobrescrevia a aba inteira só com o\n' +
+'    // que veio no corpo da requisição. Se dois pushes da mesma aba (ex.:\n' +
+'    // "Documentos") chegassem quase juntos — um subindo um arquivo grande\n' +
+'    // (que ainda não tinha voltado com driveId) e outro disparado por\n' +
+'    // qualquer outra ação enquanto isso — o segundo podia sobrescrever a\n' +
+'    // linha do primeiro sem os campos "arquivo"/"driveId" que ele nunca\n' +
+'    // conheceu, apagando o resultado do upload que já tinha sido concluído\n' +
+'    // no Drive. Agora fazemos um merge por "id": campos ausentes no payload\n' +
+'    // recebido preservam o valor já salvo na planilha, em vez de apagá-lo.\n' +
+'    // Só um campo que vem PRESENTE no payload (mesmo vazio, "") sobrescreve.\n' +
+'    var existentesMap = {};\n' +
+'    lerFolha_(body.folha).forEach(function(item){\n' +
+'      if (item.obj && item.obj.id) existentesMap[item.obj.id] = item.obj;\n' +
+'    });\n' +
+'    var rows = (body.rows || []).map(function(r){\n' +
+'      if (r && r.id && existentesMap[r.id]) {\n' +
+'        return Object.assign({}, existentesMap[r.id], r);\n' +
+'      }\n' +
+'      return r;\n' +
+'    });\n' +
 '    var cache = {};\n' +
 '    var sh = folha_(body.folha);\n' +
 '    sh.clearContents();\n' +
@@ -2285,6 +2311,7 @@ const SCRIPT_GAS =
 '  }\n' +
 '}\n' +
 '\n';
+
 function salvarUrl(){
   const inp = $('#urlGas'); if(!inp) return;
   const v = inp.value.trim();
@@ -2311,7 +2338,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 7</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 8</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
