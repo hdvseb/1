@@ -1229,7 +1229,7 @@ function migrateDados(){
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
 try{ session = JSON.parse(store.get('rio_session') || 'null'); }catch(e){ session = null; }
-const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:viewModeDefault(), selecaoAtiva:false, selecao:new Set() };
+const state = { view:'dashboard', currentFolderId:null, search:'', viewMode:viewModeDefault(), selecaoAtiva:false, selecao:new Set(), selecaoExcluidos:new Set() };
 const VIEW_MODES = [
   {m:'xg',       label:'Ícones extra grandes', ic:'fa-table-cells-large'},
   {m:'g',        label:'Ícones grandes',       ic:'fa-table-cells'},
@@ -1940,8 +1940,17 @@ function renderPerfil(){
 /* ITEM 5: log de exclusões. Vem só do backend (aba "Excluidos" da planilha,
    alimentada pelo Apps Script sempre que um arquivo ou pasta é apagado do
    Drive) — mostramos aqui data/hora, usuário e o que foi excluído. */
+/* Cada registro não tem um id próprio (vem direto da planilha), então
+   montamos uma chave estável a partir dos seus próprios campos para
+   controlar a seleção de checkboxes entre re-renderizações. */
+function excluidoKey(r){ return [r.data_hora, r.usuario, r.tipo, r.nome].map(v => String(v == null ? '' : v)).join('||'); }
 function renderExcluidos(){
   const registros = DB.get('Excluidos').slice().sort((a,b) => new Date(b.data_hora) - new Date(a.data_hora));
+  const chavesAtuais = new Set(registros.map(excluidoKey));
+  /* remove da seleção qualquer chave que não exista mais na lista atual */
+  Array.from(state.selecaoExcluidos).forEach(k => { if(!chavesAtuais.has(k)) state.selecaoExcluidos.delete(k); });
+  const nSel = state.selecaoExcluidos.size;
+  const todosSelecionados = registros.length > 0 && nSel === registros.length;
   $('#viewRoot').innerHTML = '<div class="view">' +
   '<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">' +
     '<span>Excluídos</span>' +
@@ -1949,14 +1958,27 @@ function renderExcluidos(){
   '</div>' +
   '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-trash-can"></i> Histórico de exclusões</h2></div>' +
   '<p class="sobre-texto" style="padding:12px 22px 0">Registro de todo arquivo ou pasta apagado do Google Drive, com data/hora e quem fez a exclusão.</p>' +
+  (nSel ? '<div class="sel-bar" style="margin:14px 22px 0;border-radius:8px;border:1px solid var(--border)">' +
+      '<span class="sel-count"><i class="fa-solid fa-check-double"></i> ' + nSel + ' selecionado' + (nSel>1?'s':'') + '</span>' +
+      '<button class="btn btn-danger" data-action="excluir-selecionados-excluidos"><i class="fa-solid fa-trash-can"></i> Excluir selecionados</button>' +
+      '<button class="btn btn-light" data-action="limpar-selecao-excluidos"><i class="fa-solid fa-xmark"></i> Limpar seleção</button>' +
+    '</div>' : '') +
   (registros.length
-    ? '<div class="table-wrap"><table><thead><tr><th>Data/Hora</th><th>Usuário</th><th>Tipo</th><th>Nome</th></tr></thead><tbody>' +
-      registros.map(r => '<tr>' +
+    ? '<div class="table-wrap"><table><thead><tr>' +
+        '<th style="width:36px"><input type="checkbox" class="sel-chk" data-action="toggle-sel-all-excluidos" ' + (todosSelecionados ? 'checked' : '') + '></th>' +
+        '<th>Data/Hora</th><th>Usuário</th><th>Tipo</th><th>Nome</th>' +
+      '</tr></thead><tbody>' +
+      registros.map(r => {
+        const key = excluidoKey(r);
+        const marcado = state.selecaoExcluidos.has(key);
+        return '<tr class="' + (marcado ? 'sel-row' : '') + '">' +
+        '<td><input type="checkbox" class="sel-chk" data-action="toggle-sel-excluido" data-key="' + esc(key) + '" ' + (marcado ? 'checked' : '') + '></td>' +
         '<td><small>' + esc(new Date(r.data_hora).toLocaleString('pt-BR')) + '</small></td>' +
         '<td>' + esc(r.usuario || '—') + '</td>' +
         '<td>' + (r.tipo === 'pasta' ? '<span class="tag tag-view"><i class="fa-solid fa-folder"></i> Pasta</span>' : '<span class="tag tag-view"><i class="fa-solid fa-file"></i> Arquivo</span>') + '</td>' +
         '<td>' + esc(r.nome || '—') + '</td>' +
-      '</tr>').join('') +
+      '</tr>';
+      }).join('') +
       '</tbody></table></div>'
     : '<p class="sobre-texto" style="padding:0 22px 20px">Nenhuma exclusão registrada ainda.</p>') +
   '</section></div>';
@@ -2382,6 +2404,34 @@ document.addEventListener('click', e => {
       state.selecao.clear();
       renderItens(); renderSelBar();
       break;
+    case 'toggle-sel-excluido': {
+      const key = el.dataset.key;
+      if(el.checked) state.selecaoExcluidos.add(key); else state.selecaoExcluidos.delete(key);
+      renderExcluidos();
+      break;
+    }
+    case 'toggle-sel-all-excluidos': {
+      const registros = DB.get('Excluidos');
+      if(el.checked) registros.forEach(r => state.selecaoExcluidos.add(excluidoKey(r)));
+      else state.selecaoExcluidos.clear();
+      renderExcluidos();
+      break;
+    }
+    case 'limpar-selecao-excluidos':
+      state.selecaoExcluidos.clear();
+      renderExcluidos();
+      break;
+    case 'excluir-selecionados-excluidos': {
+      const n = state.selecaoExcluidos.size;
+      if(!n) break;
+      modalConfirm('Excluir selecionados', 'Remover ' + n + ' registro' + (n>1?'s':'') + ' selecionado' + (n>1?'s':'') + ' do histórico de exclusões? Isso não afeta os arquivos/pastas em si, apenas este registro.', () => {
+        const restantes = DB.get('Excluidos').filter(r => !state.selecaoExcluidos.has(excluidoKey(r)));
+        guardarFolhaSeguro('Excluidos', restantes);
+        state.selecaoExcluidos.clear();
+        toast('Registro(s) removido(s) do histórico.'); renderExcluidos();
+      });
+      break;
+    }
     case 'mover-selecionados': {
       const idsMulti = [...state.selecao].filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
       if(!idsMulti.length){ toast('Nenhum arquivo selecionado para mover.','info'); break; }
