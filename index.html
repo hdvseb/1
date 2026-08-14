@@ -599,6 +599,16 @@ function pullViaJSONP(url){
   });
 }
 let backendAntigo = false;
+/* Ids de documentos cujo upload já foi mandado ao backend e ainda não voltou
+   com o driveId confirmado. Evita reenviar o mesmo base64 em pushes seguintes
+   (ex.: renomear outro arquivo enquanto o upload ainda processa) — essa era a
+   causa da duplicação de arquivos no Google Drive: o servidor recebia o mesmo
+   conteúdo de novo, sem driveId, e criava outro arquivo. */
+const enviandoArquivos = new Set();
+function corpoComUsuario_(extra){
+  const u = currentUser();
+  return Object.assign({userId: u ? u.id : '', userNome: u ? u.nome : ''}, extra);
+}
 const Sync = {
   url(){
     const manual = store.get('rio_gas_url');
@@ -612,26 +622,50 @@ const Sync = {
     let out = rows;
     if(f === 'Documentos'){
       out = rows.map(r => {
-        if(r.arquivo && !r.driveId) return r;
-        if(!r.arquivo && pendingArquivos[r.id]) return Object.assign({}, r, {arquivo: pendingArquivos[r.id]});
+        if(r.arquivo && !r.driveId){
+          if(enviandoArquivos.has(r.id)){
+            const c = Object.assign({}, r); delete c.arquivo; return c;
+          }
+          enviandoArquivos.add(r.id);
+          return r;
+        }
+        if(!r.arquivo && pendingArquivos[r.id]){
+          if(enviandoArquivos.has(r.id)){
+            const c = Object.assign({}, r); delete c.arquivo; return c;
+          }
+          enviandoArquivos.add(r.id);
+          return Object.assign({}, r, {arquivo: pendingArquivos[r.id]});
+        }
+        enviandoArquivos.delete(r.id);
         const c = Object.assign({}, r); delete c.arquivo; return c;
       });
     }
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({folha:f, rows:out})}).catch(()=>{});
+      body: JSON.stringify(corpoComUsuario_({folha:f, rows:out}))}).catch(()=>{});
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
   ensureDriveRoot(){
     const url = this.url(); if(!url) return;
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({acao:'ensureRoot'})}).catch(()=>{});
+      body: JSON.stringify(corpoComUsuario_({acao:'ensureRoot'}))}).catch(()=>{});
   },
-  /* Manda o arquivo/pasta correspondente do Google Drive para a lixeira. */
-  excluirDrive(tipo, driveId){
+  /* Manda o arquivo/pasta correspondente do Google Drive para a lixeira.
+     O servidor agora confere a permissão de exclusão do usuário antes de
+     efetivar (ver Code.gs) — não basta mais só esconder o botão no cliente. */
+  excluirDrive(tipo, driveId, nome, criadaPor){
     const url = this.url(); if(!url || !driveId) return;
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({acao:'excluirDrive', tipo:tipo, driveId:driveId})}).catch(()=>{});
+      body: JSON.stringify(corpoComUsuario_({acao:'excluirDrive', tipo:tipo, driveId:driveId, nome:nome, criadaPor:criadaPor}))}).catch(()=>{});
+  },
+  /* ITEM 7: pede ao backend a lista de pastas/arquivos que existem no Drive
+     mas ainda não estão cadastrados na planilha. Só o backend confirma que
+     quem pediu é admin, mas só chamamos isso para admin no front também. */
+  escanearPendentes(){
+    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
+    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_({acao:'escanearPendentes'}))})
+      .then(r => r.json());
   },
   async pull(){
     const url = this.url(); if(!url) throw new Error('sem url');
@@ -657,6 +691,10 @@ function adotarDados(data){
     if(Array.isArray(data.Permissoes)) guardarFolhaSeguro('Permissoes', mesclarRows(DB.get('Permissoes'), filtrarTombstones_('Permissoes', data.Permissoes)).map(normPermRow));
     if(Array.isArray(data.Usuarios))   guardarFolhaSeguro('Usuarios',   mesclarRows(DB.get('Usuarios'),   filtrarTombstones_('Usuarios',   data.Usuarios)).map(normUserRow));
     ['Pastas','Documentos'].forEach(f => { if(Array.isArray(data[f])) guardarFolhaSeguro(f, mesclarRows(DB.get(f), filtrarTombstones_(f, data[f]))); });
+    /* ITEM 5: "Excluidos" é um log só de leitura, gerado pelo backend (que
+       registra cada exclusão de arquivo/pasta) — o cliente nunca escreve
+       nessa aba, só espelha o que o servidor mandar. */
+    if(Array.isArray(data.Excluidos)) guardarFolhaSeguro('Excluidos', data.Excluidos);
   }catch(e){}
 }
 /* Busca os dados da planilha para a tela de login (logotipo, empresa, usuários). */
@@ -704,10 +742,39 @@ function sincronizarInicial(){
     if(!u){ session = null; store.set('rio_session',''); mostrarLogin(); buscarDadosLogin(); }
     else if(!$('#app').classList.contains('hidden')) renderApp();
     else aplicarMarca();
+    if(u && ehAdmin(u) && !backendAntigo) verificarPendentesDrive();
   }).catch(() => {
     const u = currentUser();
     if(!u){ mostrarLogin(); } else if(!$('#app').classList.contains('hidden')) renderApp();
   });
+}
+/* ITEM 7: ao abrir o app, se for administrador, verifica no Drive se há
+   subpastas/arquivos dentro de "SGD_Arquivos" que não constam cadastrados na
+   planilha (por exemplo, algo adicionado direto pelo Google Drive) e oferece
+   para importar. Só roda para admin e só uma vez por sessão carregada. */
+let pendentesJaChecados = false;
+function verificarPendentesDrive(){
+  const u = currentUser();
+  if(!u || !ehAdmin(u) || !Sync.url() || pendentesJaChecados) return;
+  pendentesJaChecados = true;
+  Sync.escanearPendentes().then(res => {
+    if(!res || res.ok === false) return;
+    const pastas = res.pastas || [], arquivos = res.arquivos || [];
+    if(!pastas.length && !arquivos.length) return;
+    modalPendentesDrive(pastas, arquivos);
+  }).catch(()=>{});
+}
+function modalPendentesDrive(pastas, arquivos){
+  window.__pendentesDriveTmp = {pastas, arquivos};
+  openModal('<h3><i class="fa-solid fa-cloud-arrow-down"></i> Itens encontrados no Drive</h3>' +
+    '<p class="modal-sub">Encontramos <b>' + pastas.length + ' pasta(s)</b> e <b>' + arquivos.length + ' arquivo(s)</b> dentro de "SGD_Arquivos" que ainda não estão cadastrados no sistema (provavelmente adicionados direto pelo Google Drive). Importar para o app agora?</p>' +
+    '<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:13px">' +
+      pastas.map(p => '<div style="padding:3px 0"><i class="fa-solid fa-folder" style="color:var(--primary)"></i> ' + esc(p.caminho) + '</div>').join('') +
+      arquivos.map(a => '<div style="padding:3px 0"><i class="fa-solid fa-file" style="color:var(--muted)"></i> ' + esc((a.caminho ? a.caminho + '/' : '') + a.nome) + '</div>').join('') +
+    '</div>' +
+    '<p class="modal-sub" style="margin-top:-8px"><i class="fa-solid fa-circle-info"></i> Os itens importados entram na Raiz — você pode movê-los para as pastas corretas depois.</p>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Agora não</button>' +
+    '<button class="btn btn-primary" data-action="importar-pendentes-drive"><i class="fa-solid fa-download"></i> Importar tudo</button></div>');
 }
 function verificarVersao(){
   toast('Verificando versão do backend…','info');
@@ -770,8 +837,7 @@ function salvarArquivoBin(d, dataUrl, titulo){
   }
   if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
   pendingArquivos[d.id] = dataUrl;
-  docs.push(Object.assign(base, {arquivo: '', tamanho: Math.round(dataUrl.length * 0.75)}));
-  DB.set('Documentos', docs);
+  DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: '', tamanho: tamanho, atualizadoEm: Date.now()}) : x));
   return true;
 }
 function fileToJpegDataUrl(file, maxDim, quality){
@@ -1274,9 +1340,18 @@ function renderSidebar(){
   const u = currentUser();
   const itens = [
     {view:'dashboard', ic:'fa-house', label:'Dashboard'},
-    {view:'usuarios',  ic:'fa-users', label:'Gerenciar Usuários'},
-    {view:'perfil',    ic:'fa-user-gear', label:'Meu Perfil'},
+    /* ITEM 6: para administradores, "Gerenciar Usuários" e "Meu Perfil"
+       continuam separados (o admin cuida de todos + do próprio perfil).
+       Para os demais usuários, os dois viram um único item — eles só
+       enxergam/editam os próprios dados de qualquer forma. */
     ...(ehAdmin(u) ? [
+      {view:'usuarios', ic:'fa-users', label:'Gerenciar Usuários'},
+      {view:'perfil',   ic:'fa-user-gear', label:'Meu Perfil'}
+    ] : [
+      {view:'perfil',   ic:'fa-user-gear', label:'Meu Perfil'}
+    ]),
+    ...(ehAdmin(u) ? [
+      {view:'excluidos', ic:'fa-trash-can', label:'Excluídos'},
       {view:'config', ic:'fa-gear', label:'Configurações'},
       {view:'sobre',  ic:'fa-book', label:'Sobre'}
     ] : [])
@@ -1290,6 +1365,10 @@ function effectiveView(){
   if(!u) return null;
   if(state.view === 'config' && !ehAdmin(u)) return 'dashboard';
   if(state.view === 'sobre'  && !ehAdmin(u)) return 'dashboard';
+  if(state.view === 'excluidos' && !ehAdmin(u)) return 'dashboard';
+  /* ITEM 6: usuário comum não tem mais item "usuarios" separado no menu — se
+     algo cair nessa view (link antigo, estado salvo), trata como "perfil". */
+  if(state.view === 'usuarios' && !ehAdmin(u)) return 'perfil';
   return state.view;
 }
 function renderView(){
@@ -1299,6 +1378,7 @@ function renderView(){
     const v = effectiveView();
     if(v === 'usuarios') renderUsuarios();
     else if(v === 'perfil') renderPerfil();
+    else if(v === 'excluidos') renderExcluidos();
     else if(v === 'config') renderConfig();
     else if(v === 'sobre') renderSobre();
     else renderDashboard();
@@ -1730,17 +1810,17 @@ function renderUsuarios(){
   '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-users"></i> ' + (isAdmin ? 'Usuários do sistema' : 'Meus dados') + '</h2>' +
   (isAdmin ? '<button class="btn btn-primary" data-action="novo-usuario"><i class="fa-solid fa-user-plus"></i> Novo Usuário</button>' : '') + '</div>' +
   (!isAdmin ? '<p class="sobre-texto" style="padding:12px 22px 0">Você pode alterar <b>apenas os seus próprios dados</b> (nome, e-mail e senha). Papel e permissões são gerenciados pelo administrador.</p>' : '') +
-  '<div class="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Papel</th><th>Permissões</th><th>Criado em</th><th class="tr-right">Ações</th></tr></thead><tbody>' +
+  /* ITEM 6: coluna "Papel" removida — a identidade de acesso do usuário passa
+     a ser só o conjunto de permissões atribuído a ele (editável pelo botão de
+     escudo). Administradores continuam marcados com uma etiqueta fixa, mas
+     deixam de ter um seletor de papel na tabela. */
+  '<div class="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Permissões</th><th>Criado em</th><th class="tr-right">Ações</th></tr></thead><tbody>' +
   usuarios.map(x => {
-    const selectPapel = (isAdmin && x.papel !== 'master' && x.id !== u.id)
-      ? '<select class="select-papel" data-user="' + x.id + '">' + ['admin','editor','visualizador'].map(p =>
-          '<option value="' + p + '"' + (x.papel === p ? ' selected' : '') + '>' + PAPEIS[p] + '</option>').join('') + '</select>'
-      : '<span class="tag ' + (x.papel === 'master' ? 'tag-admin' : 'tag-view') + '">' + PAPEIS[x.papel] + '</span>';
     return '<tr>' +
-      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + '</strong></div></td>' +
+      '<td><div class="cell-user"><span class="avatar">' + iniciais(x.nome) + '</span><strong>' + esc(x.nome) + '</strong>' +
+        (ehAdmin(x) ? ' <span class="tag tag-admin">Administrador</span>' : '') + '</div></td>' +
       '<td>' + esc(x.email) + '</td>' +
-      '<td>' + selectPapel + '</td>' +
-      '<td>' + (x.papel === 'master' ? '<span class="tag tag-admin">Todas</span>' : icoPerms(x.perms || [])) + '</td>' +
+      '<td>' + (ehAdmin(x) ? '<span class="tag tag-admin">Todas</span>' : icoPerms(x.perms || [])) + '</td>' +
       '<td><small>' + fmtData(x.criadoEm) + '</small></td>' +
       '<td class="tr-right">' +
         '<button class="btn-ic" title="' + (x.id === u.id ? 'Editar meus dados' : 'Editar dados') + '" data-action="editar-usuario" data-id="' + x.id + '"><i class="fa-solid fa-user-pen"></i></button> ' +
@@ -1755,7 +1835,8 @@ function modalNovoUsuario(){
     '<label class="campo">Nome completo<input id="mNomeUser"></label>' +
     '<label class="campo">E-mail<input id="mEmailUser" type="email"></label>' +
     '<label class="campo">Senha<input id="mSenhaUser" type="text"></label>' +
-    '<label class="campo">Papel<select id="mPapelUser"><option value="editor">Editor</option><option value="visualizador">Leitor</option><option value="admin">Administrador</option></select></label>' +
+    '<label class="campo" style="display:flex;align-items:center;gap:8px;flex-direction:row">' +
+      '<input type="checkbox" id="mAdminUser" style="width:auto;margin:0"> Administrador (acesso total, ignora a lista de permissões abaixo)</label>' +
     '<p class="modal-sub" style="margin-bottom:2px"><i class="fa-solid fa-shield-halved"></i> Permissões globais do usuário (valem em todas as pastas da empresa):</p>' +
     permsCheckboxes(PRESETS.editor) +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
@@ -1782,26 +1863,56 @@ function renderPerfil(){
     '</section>' +
   '</div></div>';
 }
+/* ITEM 5: log de exclusões. Vem só do backend (aba "Excluidos" da planilha,
+   alimentada pelo Apps Script sempre que um arquivo ou pasta é apagado do
+   Drive) — mostramos aqui data/hora, usuário e o que foi excluído. */
+function renderExcluidos(){
+  const registros = DB.get('Excluidos').slice().sort((a,b) => new Date(b.data_hora) - new Date(a.data_hora));
+  $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Excluídos</h1>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-trash-can"></i> Histórico de exclusões</h2></div>' +
+  '<p class="sobre-texto" style="padding:12px 22px 0">Registro de todo arquivo ou pasta apagado do Google Drive, com data/hora e quem fez a exclusão.</p>' +
+  (registros.length
+    ? '<div class="table-wrap"><table><thead><tr><th>Data/Hora</th><th>Usuário</th><th>Tipo</th><th>Nome</th></tr></thead><tbody>' +
+      registros.map(r => '<tr>' +
+        '<td><small>' + esc(new Date(r.data_hora).toLocaleString('pt-BR')) + '</small></td>' +
+        '<td>' + esc(r.usuario || '—') + '</td>' +
+        '<td>' + (r.tipo === 'pasta' ? '<span class="tag tag-view"><i class="fa-solid fa-folder"></i> Pasta</span>' : '<span class="tag tag-view"><i class="fa-solid fa-file"></i> Arquivo</span>') + '</td>' +
+        '<td>' + esc(r.nome || '—') + '</td>' +
+      '</tr>').join('') +
+      '</tbody></table></div>'
+    : '<p class="sobre-texto" style="padding:0 22px 20px">Nenhuma exclusão registrada ainda.</p>') +
+  '</section></div>';
+}
 /* ===== BACKEND APPS SCRIPT (VERSAO 5 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 5)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 6)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn) para a tela\n' +
 '   de login buscar dados/logotipo mesmo sem CORS.\n' +
 ' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
 '   subpasta para cada pasta do app (espelhada).\n' +
-' IMPORTANTE: após colar este código, publique uma\n' +
-' NOVA VERSÃO da implantação (Gerenciar implantações).\n' +
+' - Autorizacao no servidor (admin/permissoes), dono de\n' +
+'   pasta pode excluir mesmo sem permissao explicita, e\n' +
+'   aba Excluidos com o historico de exclusoes.\n' +
+' - Endpoint escanearPendentes: acha no Drive pastas e\n' +
+'   arquivos que ainda nao estao na planilha (uso admin).\n' +
+' IMPORTANTE: apos colar este codigo, publique uma\n' +
+' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n\n' +
-'var VERSAO = 5;\n' +
-'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa"];\n\n' +
+'var VERSAO = 6;\n' +
+'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
+'\n' +
 'function folha_(nome){\n' +
 '  var ss = SpreadsheetApp.getActiveSpreadsheet();\n' +
 '  var sh = ss.getSheetByName(nome);\n' +
 '  if (!sh) sh = ss.insertSheet(nome);\n' +
+'  if (nome === "Excluidos" && sh.getLastRow() === 0){\n' +
+'    sh.getRange(1,1,1,4).setValues([["data_hora","usuario","tipo","nome"]]);\n' +
+'  }\n' +
 '  return sh;\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
 'function pastaDriveRaiz_(){\n' +
 '  var props = PropertiesService.getScriptProperties();\n' +
 '  var id = props.getProperty("DRIVE_FOLDER");\n' +
@@ -1813,23 +1924,56 @@ const SCRIPT_GAS =
 '    props.setProperty("DRIVE_FOLDER", folder.getId());\n' +
 '  }\n' +
 '  return folder;\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
 'function lerFolha_(nome){\n' +
 '  var sh = folha_(nome);\n' +
 '  var last = sh.getLastRow();\n' +
 '  var out = [];\n' +
-'  if (last >= 1){\n' +
-'    var vals = sh.getRange(1,1,last,1).getValues();\n' +
+'  var inicio = (nome === "Excluidos") ? 2 : 1; // linha 1 é cabeçalho fixo em Excluidos\n' +
+'  if (last >= inicio){\n' +
+'    var vals = sh.getRange(inicio,1,last-inicio+1,1).getValues();\n' +
 '    for (var i=0;i<vals.length;i++){\n' +
 '      if (!vals[i][0]) continue;\n' +
-'      try { out.push({row:i+1, obj: JSON.parse(vals[i][0])}); } catch(e){}\n' +
+'      try { out.push({row:i+inicio, obj: JSON.parse(vals[i][0])}); } catch(e){}\n' +
 '    }\n' +
 '  }\n' +
 '  return out;\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
 'function gravarLinha_(nome, row, obj){\n' +
 '  folha_(nome).getRange(row,1).setValue(JSON.stringify(obj));\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
+'// ---------- AUTORIZAÇÃO NO SERVIDOR ----------\n' +
+'// Antes, qualquer chamada ao doPost era aceita sem checagem — as permissões só\n' +
+'// existiam no JavaScript do navegador e podiam ser contornadas chamando a URL\n' +
+'// /exec diretamente. Agora validamos o usuário e seu papel/permissões aqui.\n' +
+'function buscarUsuario_(userId){\n' +
+'  if (!userId) return null;\n' +
+'  var rows = lerFolha_("Usuarios");\n' +
+'  for (var i=0;i<rows.length;i++){ if (rows[i].obj.id === userId) return rows[i].obj; }\n' +
+'  return null;\n' +
+'}\n' +
+'function ehAdmin_(u){ return !!u && (u.papel === "master" || u.papel === "admin"); }\n' +
+'function usuarioTemPermissao_(u, chave){\n' +
+'  if (!u) return false;\n' +
+'  if (ehAdmin_(u)) return true;\n' +
+'  var perms = u.perms || [];\n' +
+'  return perms.indexOf(chave) !== -1;\n' +
+'}\n' +
+'function registrarExclusao_(usuarioNome, tipo, nome){\n' +
+'  try{\n' +
+'    var sh = folha_("Excluidos");\n' +
+'    sh.appendRow([JSON.stringify({\n' +
+'      data_hora: new Date().toISOString(),\n' +
+'      usuario: usuarioNome || "desconhecido",\n' +
+'      tipo: tipo,\n' +
+'      nome: nome || ""\n' +
+'    })]);\n' +
+'  }catch(e){}\n' +
+'}\n' +
+'\n' +
 'function ensureDriveFolder_(pastaId, cache){\n' +
 '  if (!pastaId) return pastaDriveRaiz_();\n' +
 '  if (cache[pastaId]) return cache[pastaId];\n' +
@@ -1848,7 +1992,16 @@ const SCRIPT_GAS =
 '  gravarLinha_("Pastas", found.row, obj);\n' +
 '  cache[pastaId] = folder;\n' +
 '  return folder;\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
+'// CORREÇÃO (itens 1 e 4): antes, "out.arquivo" era zerado incondicionalmente,\n' +
+'// mesmo quando a criação do arquivo no Drive falhava (o try/catch engolia o\n' +
+'// erro). Isso causava (a) documentos ficando em branco quando createFile\n' +
+'// falhava, e (b) duplicação no Drive quando o cliente reenviava a mesma linha\n' +
+'// (ainda com o base64 e sem driveId) antes de ter recebido o driveId de volta\n' +
+'// — o servidor tentava criar o arquivo de novo. Agora só limpamos "arquivo"\n' +
+'// quando a gravação no Drive teve sucesso, e sinalizamos erro explícito\n' +
+'// quando falha, mantendo o conteúdo para tentar de novo.\n' +
 'function processarDoc_(r, cache){\n' +
 '  var out = JSON.parse(JSON.stringify(r));\n' +
 '  var mudou = false;\n' +
@@ -1864,9 +2017,13 @@ const SCRIPT_GAS =
 '      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
 '      out.driveId = file.getId();\n' +
 '      out.driveUrl = file.getUrl();\n' +
+'      out.arquivo = "";\n' +
+'      out.erroUpload = "";\n' +
 '      mudou = true;\n' +
-'    } catch(e) {}\n' +
-'    out.arquivo = "";\n' +
+'    } catch(e) {\n' +
+'      out.erroUpload = String(e && e.message || e);\n' +
+'      mudou = true;\n' +
+'    }\n' +
 '  }\n' +
 '  if (out.movePending && out.driveId){\n' +
 '    try {\n' +
@@ -1878,7 +2035,8 @@ const SCRIPT_GAS =
 '    out.movePending = false;\n' +
 '  }\n' +
 '  return mudou ? out : r;\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
 'function doGet(e){\n' +
 '  var out = {};\n' +
 '  out.__v = VERSAO;\n' +
@@ -1893,17 +2051,100 @@ const SCRIPT_GAS =
 '  }\n' +
 '  return ContentService.createTextOutput(json)\n' +
 '    .setMimeType(ContentService.MimeType.JSON);\n' +
-'}\n\n' +
+'}\n' +
+'\n' +
+'// ITEM 7: varre recursivamente a pasta raiz do Drive e devolve arquivos/subpastas\n' +
+'// que ainda não estão cadastrados na planilha (comparando pelos IDs já salvos\n' +
+'// em "Pastas".driveFolderId e "Documentos".driveId). Uso restrito a admin — a\n' +
+'// checagem de papel é feita no doPost, aqui só devolvemos os dados.\n' +
+'function escanearPendentes_(){\n' +
+'  var pastasReg = lerFolha_("Pastas").map(function(r){ return r.obj.driveFolderId; }).filter(Boolean);\n' +
+'  var docsReg = lerFolha_("Documentos").map(function(r){ return r.obj.driveId; }).filter(Boolean);\n' +
+'  var raiz = pastaDriveRaiz_();\n' +
+'  var pastasNovas = [];\n' +
+'  var arquivosNovos = [];\n' +
+'  function varrer(folder, caminho){\n' +
+'    var subpastas = folder.getFolders();\n' +
+'    while (subpastas.hasNext()){\n' +
+'      var sub = subpastas.next();\n' +
+'      var id = sub.getId();\n' +
+'      var camAtual = caminho + "/" + sub.getName();\n' +
+'      if (pastasReg.indexOf(id) === -1){\n' +
+'        pastasNovas.push({driveFolderId:id, nome:sub.getName(), caminho:camAtual});\n' +
+'      }\n' +
+'      varrer(sub, camAtual);\n' +
+'    }\n' +
+'    var arquivos = folder.getFiles();\n' +
+'    while (arquivos.hasNext()){\n' +
+'      var f = arquivos.next();\n' +
+'      var fid = f.getId();\n' +
+'      if (docsReg.indexOf(fid) === -1){\n' +
+'        arquivosNovos.push({driveId:fid, nome:f.getName(), url:f.getUrl(), caminho:caminho, tamanho:f.getSize()});\n' +
+'      }\n' +
+'    }\n' +
+'  }\n' +
+'  varrer(raiz, raiz.getName());\n' +
+'  return {pastas: pastasNovas, arquivos: arquivosNovos};\n' +
+'}\n' +
+'\n' +
 'function doPost(e){\n' +
 '  var lock = LockService.getScriptLock();\n' +
 '  lock.waitLock(30000);\n' +
 '  try {\n' +
 '    var body = JSON.parse(e.postData.contents);\n' +
+'    var solicitante = buscarUsuario_(body.userId);\n' +
+'    var nomeSolicitante = solicitante ? solicitante.nome : (body.userNome || "desconhecido");\n' +
+'\n' +
 '    if (body.acao === "ensureRoot"){\n' +
 '      pastaDriveRaiz_();\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true, v:VERSAO}))\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
+'\n' +
+'    if (body.acao === "escanearPendentes"){\n' +
+'      if (!ehAdmin_(solicitante)){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var achados = escanearPendentes_();\n' +
+'      return ContentService.createTextOutput(JSON.stringify(Object.assign({ok:true}, achados)))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
+'    if (body.acao === "excluirDrive"){\n' +
+'      // ITENS 2/3: antes, qualquer chamador podia mandar excluir qualquer\n' +
+'      // driveId. Agora exigimos que o usuário seja admin, tenha a permissão\n' +
+'      // "excluir"/"excluir_pasta", OU (no caso de pasta) seja quem a criou —\n' +
+'      // checado no servidor, não só no cliente.\n' +
+'      var chavePerm = body.tipo === "pasta" ? "excluir_pasta" : "excluir";\n' +
+'      var ehDono = body.tipo === "pasta" && solicitante && body.criadaPor && body.criadaPor === solicitante.id;\n' +
+'      if (!ehDono && !usuarioTemPermissao_(solicitante, chavePerm)){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"sem permissão para excluir"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      try{\n' +
+'        if (body.tipo === "pasta" && body.driveId){\n' +
+'          DriveApp.getFolderById(body.driveId).setTrashed(true);\n' +
+'        } else if (body.tipo === "arquivo" && body.driveId){\n' +
+'          DriveApp.getFileById(body.driveId).setTrashed(true);\n' +
+'        }\n' +
+'        registrarExclusao_(nomeSolicitante, body.tipo, body.nome || body.driveId);\n' +
+'      } catch(e) {}\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
+'    if (!body.folha || FOLHAS.indexOf(body.folha) === -1 || body.folha === "Excluidos"){\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"folha inválida"}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
+'    // ITENS 2/3: gravação nas abas sensíveis (Usuarios, Permissoes) só para admin.\n' +
+'    if ((body.folha === "Usuarios" || body.folha === "Permissoes") && !ehAdmin_(solicitante)){\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores podem alterar usuários/permissões"}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
 '    var rows = body.rows || [];\n' +
 '    var cache = {};\n' +
 '    var sh = folha_(body.folha);\n' +
@@ -1928,7 +2169,8 @@ const SCRIPT_GAS =
 '  } finally {\n' +
 '    lock.releaseLock();\n' +
 '  }\n' +
-'}\n';
+'}\n' +
+'\n';
 function salvarUrl(){
   const inp = $('#urlGas'); if(!inp) return;
   const v = inp.value.trim();
@@ -1979,6 +2221,28 @@ document.addEventListener('click', e => {
   if(!u) return;
 
   switch(a){
+    case 'importar-pendentes-drive': {
+      const tmp = window.__pendentesDriveTmp || {pastas:[], arquivos:[]};
+      const agora = Date.now();
+      if(tmp.pastas.length){
+        const pastasAtuais = DB.get('Pastas');
+        tmp.pastas.forEach(p => pastasAtuais.push({id: uid('p'), nome: p.nome, parentId: null, driveFolderId: p.driveFolderId, criadaPor: u.id, criadoEm: agora}));
+        DB.set('Pastas', pastasAtuais);
+      }
+      if(tmp.arquivos.length){
+        const docsAtuais = DB.get('Documentos');
+        tmp.arquivos.forEach(a => {
+          const ext = (a.nome.includes('.') ? a.nome.split('.').pop() : 'bin').toLowerCase();
+          docsAtuais.push({id: uid('d'), pastaId: null, titulo: a.nome.replace(/\.[^.]+$/, ''), tipo:'arquivo', ext:ext, mime:'', driveId: a.driveId, driveUrl: a.url, tamanho: a.tamanho||0, criadoPor: u.id, criadoEm: agora, atualizadoEm: agora});
+        });
+        DB.set('Documentos', docsAtuais);
+      }
+      delete window.__pendentesDriveTmp;
+      fecharModal();
+      toast('Itens importados na Raiz. Você pode movê-los para as pastas corretas.');
+      renderDashboard();
+      break;
+    }
     case 'logout':
       session = null; store.set('rio_session',''); mostrarLogin(); buscarDadosLogin(); break;
     case 'nav':
@@ -2182,7 +2446,7 @@ document.addEventListener('click', e => {
       if(!permsDoc(d).includes('excluir')){ toast('Sem permissão de exclusão.','error'); break; }
       modalConfirm('Excluir arquivo', 'Excluir definitivamente <b>' + esc(d ? d.titulo : '') + '</b>? A ação será sincronizada com Sheets/Drive.', () => {
         marcarExcluido_('Documentos', id);
-        if(d && d.driveId) Sync.excluirDrive('arquivo', d.driveId);
+        if(d && d.driveId) Sync.excluirDrive('arquivo', d.driveId, d.titulo);
         DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== id));
         delete pendingArquivos[id];
         toast('Arquivo excluído.'); renderItens();
@@ -2194,7 +2458,7 @@ document.addEventListener('click', e => {
       const dono = p && (p.criadaPor === u.id || ehAdmin(u));
       if(!dono && !perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
       modalConfirm('Excluir pasta', 'Excluir definitivamente a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos, inclusive no Google Drive?', () => {
-        if(p && p.driveFolderId) Sync.excluirDrive('pasta', p.driveFolderId);
+        if(p && p.driveFolderId) Sync.excluirDrive('pasta', p.driveFolderId, p.nome, p.criadaPor);
         excluirPastaRec(id);
         if(state.currentFolderId === id) state.currentFolderId = null;
         toast('Pasta excluída.'); renderDashboard();
@@ -2306,7 +2570,10 @@ document.addEventListener('click', e => {
     case 'salvar-usuario': {
       if(!ehAdmin(u)){ toast('Apenas administradores podem criar usuários.','error'); break; }
       const nome = $('#mNomeUser').value.trim(), email = $('#mEmailUser').value.trim().toLowerCase(),
-            senha = $('#mSenhaUser').value, papel = $('#mPapelUser').value;
+            senha = $('#mSenhaUser').value, ehAdminNovo = $('#mAdminUser').checked;
+      /* ITEM 6: não existe mais seletor de "papel" — o acesso do usuário é
+         definido pelas permissões marcadas abaixo. "papel" só continua
+         guardando se a conta é administrador (acesso total) ou não. */
       if(!nome || !email.includes('@')){ toast('Informe nome e e-mail válidos.','error'); return; }
       if(senha.length < 6){ toast('A senha deve ter ao menos 6 caracteres.','error'); return; }
       if(getUsuarios().some(x => x.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); return; }
@@ -2314,7 +2581,7 @@ document.addEventListener('click', e => {
       if(!perms.length) perms = PRESETS.visualizador.slice();
       if(!perms.includes('visualizar')) perms.unshift('visualizar');
       const usuarios = DB.get('Usuarios');
-      usuarios.push({id: uid('u'), nome:nome, email:email, senha:senha, papel:papel, perms:perms, criadoEm:Date.now()});
+      usuarios.push({id: uid('u'), nome:nome, email:email, senha:senha, papel: ehAdminNovo ? 'admin' : 'editor', perms:perms, criadoEm:Date.now()});
       DB.set('Usuarios', usuarios); fecharModal(); toast('Usuário criado.'); renderUsuarios(); break;
     }
     case 'excluir-usuario': {
@@ -2384,19 +2651,6 @@ document.addEventListener('change', e => {
     if(row && e.target.value) aplicarPresetRow(row, e.target.value);
     e.target.value = '';
     return;
-  }
-  if(e.target.id === 'mPapelUser'){
-    const preset = PRESETS[e.target.value] || PRESETS.visualizador;
-    $$('#modalCard input[data-perm]').forEach(cb => { cb.checked = preset.includes(cb.dataset.perm); });
-    return;
-  }
-  if(e.target.matches('.select-papel') && !e.target.classList.contains('row-preset') && ehAdmin(currentUser())){
-    const id = e.target.dataset.user;
-    const usr = currentUser();
-    if(id === usr.id){ toast('Você não pode alterar o próprio papel.','error'); renderUsuarios(); return; }
-    const preset = PRESETS[e.target.value] || PRESETS.visualizador;
-    DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === id ? Object.assign({}, x, {papel: e.target.value, perms: preset.slice()}) : x));
-    toast('Papel e permissões padrão atualizados.'); renderUsuarios();
   }
 });
 
