@@ -340,12 +340,6 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
       <button class="btn btn-primary btn-block" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Entrar</button>
     </form>
     <button id="btnBuscar" class="btn btn-light btn-block hidden" style="margin-top:10px" data-action="buscar-dados"><i class="fa-solid fa-rotate"></i> Buscar dados da planilha</button>
-    <div id="loginUrlBox" class="hidden" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <label class="campo">URL de integração (Apps Script)
-        <input id="loginUrlGas" placeholder="https://script.google.com/macros/s/XXXX/exec">
-      </label>
-      <button class="btn btn-light btn-block" type="button" data-action="salvar-url-login" style="margin-top:8px"><i class="fa-solid fa-floppy-disk"></i> Salvar e conectar</button>
-    </div>
   </div>
 </div>
 
@@ -385,6 +379,49 @@ const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const APP_VERSAO = 5;
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
+const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
+let settingsGasUrl = null;
+function parseCsvLine_(line){
+  const out = []; let cur = ''; let inQ = false;
+  for(let i=0;i<line.length;i++){
+    const c = line[i];
+    if(inQ){
+      if(c === '"'){
+        if(line[i+1] === '"'){ cur += '"'; i++; } else { inQ = false; }
+      } else cur += c;
+    } else {
+      if(c === '"') inQ = true;
+      else if(c === ','){ out.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+function parseCsv_(text){
+  return text.split(/\r?\n/).filter(l => l.length).map(parseCsvLine_);
+}
+/* Lê a aba "Settings" da planilha (pública, sem precisar do Apps Script) e procura
+   a linha com chave "GAS_URL" para descobrir a URL de integração automaticamente.
+   Assim, se a implantação do Apps Script mudar, basta editar essa célula na planilha. */
+async function buscarSettingsPlanilha(){
+  try{
+    const url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/gviz/tq?tqx=out:csv&sheet=Settings';
+    const r = await fetch(url);
+    if(!r.ok) return null;
+    const txt = await r.text();
+    const rows = parseCsv_(txt);
+    let start = 0;
+    if(rows.length && String(rows[0][0] || '').trim().toLowerCase() === 'chave') start = 1;
+    for(let i=start;i<rows.length;i++){
+      const chave = (rows[i][0] || '').trim().toLowerCase();
+      const valor = (rows[i][1] || '').trim();
+      if(chave === 'gas_url' && valor) return valor;
+    }
+    return null;
+  }catch(e){ return null; }
+}
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -500,6 +537,32 @@ const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
   set(f, rows){ guardarFolhaSeguro(f, rows); Sync.push(f, rows); }
 };
+/* ============ TOMBSTONES (evita que exclusões "ressuscitem" numa sincronização em andamento) ============
+   Quando algo é excluído, o app manda a lista atualizada para a planilha, mas essa gravação é
+   assíncrona. Se uma sincronização (pull) ocorrer antes dela terminar, o servidor ainda responde com o
+   item "excluído" presente, e a mesclagem local+servidor o traz de volta. Para evitar isso, guardamos
+   por alguns minutos quais ids foram excluídos e os ignoramos em qualquer mesclagem nesse período. */
+const TOMBSTONE_MS = 3 * 60 * 1000;
+const tombstones = {};
+function marcarExcluido_(folha, ids){
+  const arr = Array.isArray(ids) ? ids : [ids];
+  if(!arr.length) return;
+  if(!tombstones[folha]) tombstones[folha] = new Map();
+  const now = Date.now();
+  arr.forEach(id => { if(id) tombstones[folha].set(id, now); });
+}
+function filtrarTombstones_(folha, rows){
+  const m = tombstones[folha];
+  if(!m || !m.size || !Array.isArray(rows)) return rows;
+  const now = Date.now();
+  return rows.filter(r => {
+    if(!r || !r.id) return true;
+    const t = m.get(r.id);
+    if(t === undefined) return true;
+    if(now - t > TOMBSTONE_MS){ m.delete(r.id); return true; }
+    return false;
+  });
+}
 let pullTimer = null;
 function agendarPull(){
   if(!Sync.url()) return;
@@ -533,7 +596,12 @@ function pullViaJSONP(url){
 }
 let backendAntigo = false;
 const Sync = {
-  url(){ return store.get('rio_gas_url') || ''; },
+  url(){
+    const manual = store.get('rio_gas_url');
+    if(manual) return manual;
+    if(settingsGasUrl) return settingsGasUrl;
+    return DEFAULT_GAS_URL;
+  },
   setUrl(u){ store.set('rio_gas_url', u || ''); atualizarBadge(); },
   push(f, rows){
     const url = this.url(); if(!url) return;
@@ -576,24 +644,16 @@ const Sync = {
 function adotarDados(data){
   try{
     if(Array.isArray(data.Empresa) && data.Empresa.length) guardarFolhaSeguro('Empresa', data.Empresa);
-    if(Array.isArray(data.Permissoes)) guardarFolhaSeguro('Permissoes', mesclarRows(DB.get('Permissoes'), data.Permissoes).map(normPermRow));
-    if(Array.isArray(data.Usuarios))   guardarFolhaSeguro('Usuarios',   mesclarRows(DB.get('Usuarios'), data.Usuarios).map(normUserRow));
-    ['Pastas','Documentos'].forEach(f => { if(Array.isArray(data[f])) guardarFolhaSeguro(f, mesclarRows(DB.get(f), data[f])); });
+    if(Array.isArray(data.Permissoes)) guardarFolhaSeguro('Permissoes', mesclarRows(DB.get('Permissoes'), filtrarTombstones_('Permissoes', data.Permissoes)).map(normPermRow));
+    if(Array.isArray(data.Usuarios))   guardarFolhaSeguro('Usuarios',   mesclarRows(DB.get('Usuarios'),   filtrarTombstones_('Usuarios',   data.Usuarios)).map(normUserRow));
+    ['Pastas','Documentos'].forEach(f => { if(Array.isArray(data[f])) guardarFolhaSeguro(f, mesclarRows(DB.get(f), filtrarTombstones_(f, data[f]))); });
   }catch(e){}
 }
 /* Busca os dados da planilha para a tela de login (logotipo, empresa, usuários). */
 function buscarDadosLogin(){
   const st = $('#loginStatus');
   const btn = $('#btnBuscar');
-  const urlBox = $('#loginUrlBox');
   const setStatus = (html, cls) => { if(st){ st.innerHTML = html; st.className = 'login-status' + (cls ? ' ' + cls : ''); } };
-  if(!Sync.url()){
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Nenhuma planilha configurada. Cole a URL de integração abaixo para conectar.', 'erro');
-    if(urlBox) urlBox.classList.remove('hidden');
-    mostrarLogin();
-    return;
-  }
-  if(urlBox) urlBox.classList.add('hidden');
   setStatus('<i class="fa-solid fa-spinner fa-spin"></i> Conectando à planilha…');
   if(btn) btn.classList.add('hidden');
   Sync.ensureDriveRoot();
@@ -614,18 +674,10 @@ function buscarDadosLogin(){
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   }).catch(() => {
-    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique a URL abaixo e sua conexão com a internet.', 'erro');
-    if(urlBox) urlBox.classList.remove('hidden');
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. Verifique sua conexão com a internet ou a URL em "Sobre".', 'erro');
     aplicarMarca(); mostrarLogin();
     if(btn) btn.classList.remove('hidden');
   });
-}
-function salvarUrlLogin(){
-  const inp = $('#loginUrlGas'); if(!inp) return;
-  const v = inp.value.trim();
-  if(!v){ toast('Cole a URL do Apps Script antes de salvar.','error'); return; }
-  Sync.setUrl(v);
-  buscarDadosLogin();
 }
 /* Sincronização periódica com o app logado. */
 function sincronizarInicial(){
@@ -1138,6 +1190,11 @@ function trilha(){
 }
 function excluirPastaRec(id){
   DB.get('Pastas').filter(p => p.parentId === id).forEach(f => excluirPastaRec(f.id));
+  const docsDaPasta = DB.get('Documentos').filter(d => d.pastaId === id).map(d => d.id);
+  const permsDaPasta = DB.get('Permissoes').filter(p => p.pastaId === id).map(p => p.id);
+  marcarExcluido_('Pastas', id);
+  marcarExcluido_('Documentos', docsDaPasta);
+  marcarExcluido_('Permissoes', permsDaPasta);
   DB.set('Pastas',     DB.get('Pastas').filter(p => p.id !== id));
   DB.set('Documentos', DB.get('Documentos').filter(d => d.pastaId !== id));
   DB.set('Permissoes', DB.get('Permissoes').filter(p => p.pastaId !== id));
@@ -1912,7 +1969,6 @@ document.addEventListener('click', e => {
 
   if(a === 'recarregar'){ location.reload(); return; }
   if(a === 'buscar-dados'){ buscarDadosLogin(); return; }
-  if(a === 'salvar-url-login'){ salvarUrlLogin(); return; }
 
   const u = currentUser();
   if(!u) return;
@@ -2120,6 +2176,7 @@ document.addEventListener('click', e => {
       const d = DB.get('Documentos').find(x => x.id === id);
       if(!permsDoc(d).includes('excluir')){ toast('Sem permissão de exclusão.','error'); break; }
       modalConfirm('Excluir arquivo', 'Excluir definitivamente <b>' + esc(d ? d.titulo : '') + '</b>? A ação será sincronizada com Sheets/Drive.', () => {
+        marcarExcluido_('Documentos', id);
         DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== id));
         delete pendingArquivos[id];
         toast('Arquivo excluído.'); renderItens();
@@ -2257,6 +2314,9 @@ document.addEventListener('click', e => {
       if(u.papel !== 'master'){ toast('Apenas o Master Admin pode excluir usuários.','error'); break; }
       const x = getUsuarios().find(y => y.id === id);
       modalConfirm('Excluir usuário', 'Remover o usuário <b>' + esc(x ? x.nome : '') + '</b> e suas permissões de pasta?', () => {
+        const permsDoUsuario = DB.get('Permissoes').filter(p => p.userId === id).map(p => p.id);
+        marcarExcluido_('Usuarios', id);
+        marcarExcluido_('Permissoes', permsDoUsuario);
         DB.set('Usuarios', DB.get('Usuarios').filter(y => y.id !== id));
         DB.set('Permissoes', DB.get('Permissoes').filter(p => p.userId !== id));
         toast('Usuário excluído.'); renderUsuarios();
@@ -2351,39 +2411,38 @@ $('#loginForm').addEventListener('submit', e => {
     return false;
   };
   if(tenta()) return;
-  if(Sync.url()){
-    $('#loginErro').textContent = '';
-    const st = $('#loginStatus');
-    if(st){ st.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verificando usuários na planilha…'; st.className = 'login-status'; }
-    Sync.pull().then(data => {
-      if(data && typeof data === 'object') Sync.applyData(data);
-      aplicarMarca(); mostrarLogin();
-      if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
-    }).catch(() => {
-      aplicarMarca(); mostrarLogin();
-      $('#loginErro').textContent = 'Não foi possível verificar a planilha. Tente novamente.';
-    });
-  } else {
-    mostrarLogin();
-    $('#loginErro').textContent = 'Nenhuma planilha configurada. Configure a URL de integração em "Sobre" para poder entrar.';
-  }
+  $('#loginErro').textContent = '';
+  const st = $('#loginStatus');
+  if(st){ st.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verificando usuários na planilha…'; st.className = 'login-status'; }
+  Sync.pull().then(data => {
+    if(data && typeof data === 'object') Sync.applyData(data);
+    aplicarMarca(); mostrarLogin();
+    if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
+  }).catch(() => {
+    aplicarMarca(); mostrarLogin();
+    $('#loginErro').textContent = 'Não foi possível verificar a planilha. Tente novamente.';
+  });
 });
 
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
 /* ================= BOOT =================
+   Primeiro tenta descobrir a URL do Apps Script pela aba "Settings" da planilha
+   (chave GAS_URL). Se não conseguir, usa a URL padrão embutida no código.
    Sempre busca os dados da planilha ao abrir (logotipo, empresa, usuários).
    O login só funciona com usuários reais cadastrados na aba "Usuarios". */
-try{
-  seed();
-  cleanupExemplos();
-  migrateDados();
-  if(currentUser()){ iniciarApp(); sincronizarInicial(); }
-  else { mostrarLogin(); buscarDadosLogin(); }
-}catch(err){
-  try{ toast('Erro na inicialização: ' + err.message, 'error'); }catch(e){}
-  mostrarLogin();
-}
+buscarSettingsPlanilha().then(u => { settingsGasUrl = u; }).catch(() => {}).finally(() => {
+  try{
+    seed();
+    cleanupExemplos();
+    migrateDados();
+    if(currentUser()){ iniciarApp(); sincronizarInicial(); }
+    else { mostrarLogin(); buscarDadosLogin(); }
+  }catch(err){
+    try{ toast('Erro na inicialização: ' + err.message, 'error'); }catch(e){}
+    mostrarLogin();
+  }
+});
 </script>
 </body>
 </html>
