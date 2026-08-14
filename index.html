@@ -75,6 +75,7 @@ button{font-family:inherit}
 .card{background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 1px 3px rgba(16,42,90,.07);overflow:visible}
 .card.mb{margin-bottom:20px}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px 0;flex-wrap:wrap}
+.card-head-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
 .card-head h2{font-size:16.5px;color:var(--heading);display:flex;align-items:center;gap:10px}
 .card-head h2 i{color:var(--primary)}
 .toolbar{display:flex;gap:12px;align-items:center;padding:16px 22px;flex-wrap:wrap}
@@ -1438,7 +1439,13 @@ function renderDashboard(){
     '<h1 class="page-title">Dashboard</h1>' +
     '<section class="card">' +
       '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Minhas Pastas</h2>' +
+        '<div class="card-head-right">' +
         (state.currentFolderId ? '<span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
+        '<div class="viewmenu"><button class="btn btn-light" data-action="menu-view" title="Modo de visualização: ' + vm.label + '"><i class="fa-solid ' + vm.ic + '"></i> Visualizar</button>' +
+          '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
+            '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
+          ).join('') + '</div></div>' +
+        '</div>' +
       '</div>' +
       '<div class="toolbar">' +
         '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" value="' + esc(state.search) + '"></div>' +
@@ -1448,10 +1455,6 @@ function renderDashboard(){
             ? '<button class="btn btn-light" data-action="abrir-camera" title="Digitalizar com a câmera do celular"><i class="fa-solid fa-camera"></i> Câmera</button>' +
               '<button class="btn btn-primary" data-action="enviar-arquivo" title="Formatos permitidos: ' + esc(formatosPermitidos().join(', ')) + '"><i class="fa-solid fa-upload"></i> Enviar Arquivo</button>'
             : '') +
-          '<div class="viewmenu"><button class="btn btn-light" data-action="menu-view" title="Modo de visualização: ' + vm.label + '"><i class="fa-solid ' + vm.ic + '"></i> Visualizar</button>' +
-            '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
-              '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
-            ).join('') + '</div></div>' +
           '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
           '<button class="btn btn-light" data-action="voltar" ' + (state.currentFolderId ? '' : 'disabled') + '><i class="fa-solid fa-arrow-left"></i> Voltar</button>' +
         '</div>' +
