@@ -1254,9 +1254,11 @@ function permsAtuais(){
 function permsDoc(d){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
+  // O usuário que enviou o documento sempre tem acesso completo a ele,
+  // independentemente das permissões da pasta onde está guardado.
+  if(d.criadoPor === u.id) return ALL_PERMS.slice();
   const global = permsGlobais(u);
   if(!d.pastaId){
-    if(d.criadoPor === u.id) return global;
     return global.includes('visualizar') ? global : [];
   }
   return permsEff(u.id, pastaPorId(d.pastaId));
@@ -1630,9 +1632,16 @@ function modalVer(docId){
     corpo = '<div class="doc-body">' + esc(d.conteudo) + '</div>';
   } else if(d.arquivo || d.driveId){
     if(cat === 'pdf'){
-      if(d.arquivo && !protegido){
+      if(!protegido && d.arquivo){
         currentBlobUrl = dataURLtoBlobUrl(d.arquivo);
         corpo = '<iframe class="pdf-frame" src="' + currentBlobUrl + '"></iframe>';
+      } else if(!protegido && drivePrev){
+        // Arquivo já sincronizado no Drive e sem restrição de download/impressão:
+        // usa a pré-visualização pública do próprio Drive em vez do fluxo
+        // "protegido" (que dependia de baixar o binário via fetch e falhava
+        // por CORS, mostrando "Visualização protegida indisponível" mesmo
+        // para quem tinha permissão total).
+        corpo = '<iframe class="pdf-frame" src="' + drivePrev + '"></iframe>';
       } else {
         corpo = '<div class="pdf-restrito" id="pdfRestrito"><div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div></div>';
         pdfPendente = {doc: d};
