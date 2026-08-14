@@ -627,6 +627,12 @@ const Sync = {
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify({acao:'ensureRoot'})}).catch(()=>{});
   },
+  /* Manda o arquivo/pasta correspondente do Google Drive para a lixeira. */
+  excluirDrive(tipo, driveId){
+    const url = this.url(); if(!url || !driveId) return;
+    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({acao:'excluirDrive', tipo:tipo, driveId:driveId})}).catch(()=>{});
+  },
   async pull(){
     const url = this.url(); if(!url) throw new Error('sem url');
     try{
@@ -2176,6 +2182,7 @@ document.addEventListener('click', e => {
       if(!permsDoc(d).includes('excluir')){ toast('Sem permissão de exclusão.','error'); break; }
       modalConfirm('Excluir arquivo', 'Excluir definitivamente <b>' + esc(d ? d.titulo : '') + '</b>? A ação será sincronizada com Sheets/Drive.', () => {
         marcarExcluido_('Documentos', id);
+        if(d && d.driveId) Sync.excluirDrive('arquivo', d.driveId);
         DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== id));
         delete pendingArquivos[id];
         toast('Arquivo excluído.'); renderItens();
@@ -2186,7 +2193,8 @@ document.addEventListener('click', e => {
       const perms = permsAtuais();
       const dono = p && (p.criadaPor === u.id || ehAdmin(u));
       if(!dono && !perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
-      modalConfirm('Excluir pasta', 'Excluir a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos? (A pasta do Drive permanece com os arquivos já enviados.)', () => {
+      modalConfirm('Excluir pasta', 'Excluir definitivamente a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos, inclusive no Google Drive?', () => {
+        if(p && p.driveFolderId) Sync.excluirDrive('pasta', p.driveFolderId);
         excluirPastaRec(id);
         if(state.currentFolderId === id) state.currentFolderId = null;
         toast('Pasta excluída.'); renderDashboard();
