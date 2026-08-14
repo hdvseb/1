@@ -1807,9 +1807,6 @@ function modalPermsUser(userId){
   const x = getUsuarios().find(y => y.id === userId); if(!x) return;
   openModal('<h3><i class="fa-solid fa-user-shield"></i> Permissões globais — ' + esc(x.nome) + '</h3>' +
     '<p class="modal-sub">Valem em <b>todas as pastas da empresa</b> (criar pasta, upload, excluir etc.). Pastas privadas de outros usuários continuam protegidas; use "Compartilhar" para liberá-las.</p>' +
-    '<div class="preset-row"><button data-action="preset-perms" data-preset="visualizador">Perfil Leitor</button>' +
-    '<button data-action="preset-perms" data-preset="editor">Perfil Editor</button>' +
-    '<button data-action="preset-perms" data-preset="completo">Tudo liberado</button></div>' +
     permsCheckboxes(x.perms || []) +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-perms-user" data-id="' + x.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
