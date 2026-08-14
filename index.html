@@ -1438,9 +1438,10 @@ function renderDashboard(){
   '<div class="view">' +
     '<h1 class="page-title">Dashboard</h1>' +
     '<section class="card">' +
-      '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Minhas Pastas</h2>' +
+      '<div class="card-head"><h2><i class="fa-solid fa-folder-open"></i> Minhas Pastas' +
+        (state.currentFolderId ? ' <span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
+        '</h2>' +
         '<div class="card-head-right">' +
-        (state.currentFolderId ? '<span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
         (perms.includes('criar_pasta') ? '<button class="btn-ic" data-action="nova-pasta" title="Nova Pasta"><i class="fa-solid fa-folder-plus"></i></button>' : '') +
         (perms.includes('upload')
           ? '<button class="btn-ic" data-action="abrir-camera" title="Câmera"><i class="fa-solid fa-camera"></i></button>' +
