@@ -1443,10 +1443,10 @@ function renderDashboard(){
         (state.currentFolderId ? '<span class="tag tag-info"><i class="fa-solid fa-shield-halved"></i> ' + icoPerms(perms) + '</span>' : '') +
         (perms.includes('criar_pasta') ? '<button class="btn-ic" data-action="nova-pasta" title="Nova Pasta"><i class="fa-solid fa-folder-plus"></i></button>' : '') +
         (perms.includes('upload')
-          ? '<button class="btn-ic" data-action="abrir-camera" title="Câmera — Digitalizar com a câmera do celular"><i class="fa-solid fa-camera"></i></button>' +
-            '<button class="btn-ic" data-action="enviar-arquivo" title="Enviar Arquivo — Formatos permitidos: ' + esc(formatosPermitidos().join(', ')) + '"><i class="fa-solid fa-upload"></i></button>'
+          ? '<button class="btn-ic" data-action="abrir-camera" title="Câmera"><i class="fa-solid fa-camera"></i></button>' +
+            '<button class="btn-ic" data-action="enviar-arquivo" title="Enviar"><i class="fa-solid fa-upload"></i></button>'
           : '') +
-        '<div class="viewmenu"><button class="btn-ic" data-action="menu-view" title="Visualizar — Modo: ' + vm.label + '"><i class="fa-solid ' + vm.ic + '"></i></button>' +
+        '<div class="viewmenu"><button class="btn-ic" data-action="menu-view" title="Visualizar"><i class="fa-solid ' + vm.ic + '"></i></button>' +
           '<div class="viewmenu-pop" id="viewPop">' + VIEW_MODES.map(v =>
             '<button class="vm-item ' + (v.m === state.viewMode ? 'active' : '') + '" data-action="set-view" data-mode="' + v.m + '"><i class="fa-solid ' + v.ic + '"></i> ' + v.label + '</button>'
           ).join('') + '</div></div>' +
