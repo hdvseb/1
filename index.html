@@ -392,52 +392,16 @@ const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx',
 const APP_VERSAO = 8;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
-let settingsGasUrl = null;
-function parseCsvLine_(line){
-  const out = []; let cur = ''; let inQ = false;
-  for(let i=0;i<line.length;i++){
-    const c = line[i];
-    if(inQ){
-      if(c === '"'){
-        if(line[i+1] === '"'){ cur += '"'; i++; } else { inQ = false; }
-      } else cur += c;
-    } else {
-      if(c === '"') inQ = true;
-      else if(c === ','){ out.push(cur); cur = ''; }
-      else cur += c;
-    }
-  }
-  out.push(cur);
-  return out;
-}
-function parseCsv_(text){
-  return text.split(/\r?\n/).filter(l => l.length).map(parseCsvLine_);
-}
-/* Lê a aba "Settings" da planilha (pública, sem precisar do Apps Script) e procura
-   a linha com chave "GAS_URL" para descobrir a URL de integração automaticamente.
-   Assim, se a implantação do Apps Script mudar, basta editar essa célula na planilha. */
-async function buscarSettingsPlanilha(){
-  const nomesTentativa = ['Settings','settings','SETTINGS','Configuracoes','Configurações'];
-  for(const nome of nomesTentativa){
-    try{
-      const url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(nome);
-      const r = await fetch(url);
-      if(!r.ok) continue;
-      const txt = await r.text();
-      if(!txt || !txt.trim()) continue;
-      const rows = parseCsv_(txt);
-      if(!rows.length) continue;
-      let start = 0;
-      if(String(rows[0][0] || '').trim().toLowerCase() === 'chave') start = 1;
-      for(let i=start;i<rows.length;i++){
-        const chave = (rows[i][0] || '').trim().toLowerCase();
-        const valor = (rows[i][1] || '').trim();
-        if(chave === 'gas_url' && valor) return valor;
-      }
-    }catch(e){ /* tenta o próximo nome */ }
-  }
-  return null;
-}
+// REMOÇÃO (item 10): a busca automática de GAS_URL na aba "Settings" via
+// exportação CSV pública (gviz/tq) foi removida. Ela dependia da planilha
+// estar compartilhada como "qualquer pessoa com o link pode visualizar",
+// o que exporia as demais abas (inclusive "Usuarios") a qualquer pessoa com
+// a URL da planilha — não só a aba "Settings". Além disso, como a URL
+// manual salva (Sobre → "Salvar URL") já tem prioridade em Sync.url(), essa
+// busca era redundante na prática: só gerava erros de CORS no console (a
+// planilha não é pública) e atrasava a inicialização com até 5 tentativas
+// sequenciais. A URL de integração agora vem só de: 1) URL manual salva
+// pelo usuário, ou 2) DEFAULT_GAS_URL fixa no código.
 const store = {
   _m: {},
   get(k){ try{ return localStorage.getItem(k); }catch(e){ return (k in this._m) ? this._m[k] : null; } },
@@ -450,11 +414,27 @@ function guardarFolhaSeguro(f, rows){
     return store.set('rio_'+f, JSON.stringify(slim));
   }catch(e){ return false; }
 }
+// CORREÇÃO (item 9): mesmo princípio da correção no servidor — antes, o
+// merge de uma linha do servidor sobre a linha local substituía o objeto
+// INTEIRO. Se em algum momento o servidor devolvesse uma versão da linha
+// sem "driveId"/"arquivo" (ex.: durante uma corrida de push, ou uma janela
+// antes do backend corrigido entrar no ar), o merge local apagava também a
+// cópia de segurança que só existia no navegador. Agora o merge é por
+// campo: o servidor continua "ganhando" para os campos que ele de fato
+// devolveu, mas um campo que só existe localmente (e não veio na resposta
+// do servidor) é preservado em vez de apagado.
 function mesclarRows(localRows, serverRows){
-  const map = new Map();
-  (localRows||[]).forEach(r => { if(r && r.id) map.set(r.id, r); });
-  (serverRows||[]).forEach(r => { if(r && r.id) map.set(r.id, r); });
-  return Array.from(map.values());
+  const mapLocal = new Map();
+  (localRows||[]).forEach(r => { if(r && r.id) mapLocal.set(r.id, r); });
+  const mapFinal = new Map();
+  (serverRows||[]).forEach(r => {
+    if(!r || !r.id) return;
+    const loc = mapLocal.get(r.id);
+    mapFinal.set(r.id, loc ? Object.assign({}, loc, r) : r);
+    mapLocal.delete(r.id);
+  });
+  mapLocal.forEach((r, id) => mapFinal.set(id, r));
+  return Array.from(mapFinal.values());
 }
 function formatosPermitidos(){
   const f = getEmpresa().formats;
@@ -636,7 +616,6 @@ const Sync = {
   url(){
     const manual = store.get('rio_gas_url');
     if(manual) return manual;
-    if(settingsGasUrl) return settingsGasUrl;
     return DEFAULT_GAS_URL;
   },
   setUrl(u){ store.set('rio_gas_url', u || ''); atualizarBadge(); },
@@ -2961,27 +2940,26 @@ $('#loginForm').addEventListener('submit', e => {
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 
 /* ================= BOOT =================
-   Primeiro tenta descobrir a URL do Apps Script pela aba "Settings" da planilha
-   (chave GAS_URL). Se não conseguir, usa a URL padrão embutida no código.
+   A URL do Apps Script vem da configuração manual (Sobre → "Salvar URL")
+   ou da URL padrão embutida no código (ver item 10 sobre a remoção da
+   busca automática via aba "Settings" pública).
    Sempre busca os dados da planilha ao abrir (logotipo, empresa, usuários).
    O login só funciona com usuários reais cadastrados na aba "Usuarios".
    Aplica a marca (logotipo/nome) de imediato, de forma síncrona, usando o
    que já estiver salvo localmente — evita o "flash" do ícone genérico
-   enquanto aguarda as chamadas de rede (buscarSettingsPlanilha/Sync.pull)
-   para só então trocar pelo logotipo real. */
+   enquanto aguarda o Sync.pull para só então trocar pelo logotipo real. */
 aplicarMarca();
-buscarSettingsPlanilha().then(u => { settingsGasUrl = u; }).catch(() => {}).finally(() => {
-  try{
-    seed();
-    cleanupExemplos();
-    migrateDados();
-    if(currentUser()){ iniciarApp(); sincronizarInicial(); }
-    else { mostrarLogin(); buscarDadosLogin(); }
-  }catch(err){
-    try{ toast('Erro na inicialização: ' + err.message, 'error'); }catch(e){}
-    mostrarLogin();
-  }
-});
+try{
+  seed();
+  cleanupExemplos();
+  migrateDados();
+  if(currentUser()){ iniciarApp(); sincronizarInicial(); }
+  else { mostrarLogin(); buscarDadosLogin(); }
+}catch(err){
+  try{ toast('Erro na inicialização: ' + err.message, 'error'); }catch(e){}
+  mostrarLogin();
+}
+
 </script>
 </body>
 </html>
