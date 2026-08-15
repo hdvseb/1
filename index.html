@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 9;
+const APP_VERSAO = 10;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 // REMOÇÃO (item 10): a busca automática de GAS_URL na aba "Settings" via
@@ -692,6 +692,15 @@ const Sync = {
     const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
     return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify(corpoComUsuario_({acao:'trocarSenha', userId, senhaAtual, senhaNova}))})
+      .then(r => r.json());
+  },
+  /* ITEM 12: edição do PRÓPRIO perfil (nome/e-mail/senha) — funciona pra
+     qualquer usuário, não só admin, sem precisar reabrir a gravação da
+     aba "Usuarios" inteira pra não-admins. */
+  atualizarPerfil(userId, nome, email, senha){
+    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
+    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_({acao:'atualizarPerfil', userId, nome, email, senha}))})
       .then(r => r.json());
   },
   async pull(){
@@ -1993,11 +2002,10 @@ function renderExcluidos(){
 /* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 9)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 10)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
-' - doGet com suporte a JSONP (?callback=fn) para a tela\n' +
-'   de login buscar dados/logotipo mesmo sem CORS. NUNCA\n' +
-'   devolve campos de senha (senha/senhaHash/senhaSalt).\n' +
+' - doGet com suporte a JSONP (?callback=fn). NUNCA devolve\n' +
+'   campos de senha (senha/senhaHash/senhaSalt).\n' +
 ' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
 '   subpasta para cada pasta do app (espelhada).\n' +
 ' - Autorizacao no servidor (admin/permissoes), dono de\n' +
@@ -2009,17 +2017,20 @@ const SCRIPT_GAS =
 '   Excluidos (uso admin, via botao "Limpar excluidos").\n' +
 ' - Escritas em qualquer aba fazem merge por "id" com o\n' +
 '   que ja existe na planilha, em vez de sobrescrever a\n' +
-'   linha inteira - evita que um push atrasado apague\n' +
-'   campos (ex.: driveId) que outro push mais recente ja\n' +
-'   tinha gravado (ver Documentos).\n' +
+'   linha inteira - evita perder campos (ex.: driveId) que\n' +
+'   um push mais recente ja tinha gravado (ver Documentos).\n' +
 ' - Senha nunca fica em texto puro: so senhaHash+senhaSalt\n' +
 '   (SHA-256) sao gravados. Login (acao "login") e troca de\n' +
 '   senha (acao "trocarSenha") sao verificados aqui, no\n' +
-'   servidor - o navegador nunca compara senha sozinho.\n' +
+'   servidor.\n' +
+' - Endpoint atualizarPerfil: qualquer usuario (admin ou\n' +
+'   nao) pode editar o proprio nome/e-mail/senha, sem\n' +
+'   precisar de acesso de admin - so mexe na propria linha\n' +
+'   e nunca em papel/perms.\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n' +
-'var VERSAO = 9;\n' +
+'var VERSAO = 10;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2320,6 +2331,50 @@ const SCRIPT_GAS =
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
 '\n' +
+'    // ITEM 12: antes, SÓ admin podia gravar qualquer coisa na aba "Usuarios"\n' +
+'    // (inclusive editar o próprio nome/e-mail), porque a gravação genérica\n' +
+'    // dessa aba exige admin — abrir isso pra qualquer um seria arriscado\n' +
+'    // (um usuário poderia montar um payload alterando "papel"/"perms" de\n' +
+'    // qualquer conta, inclusive a própria). Este endpoint dedicado resolve\n' +
+'    // isso com segurança: só mexe na conta de quem está pedindo (body.userId\n' +
+'    // tem que bater com a própria linha), e só nos campos nome/e-mail/senha\n' +
+'    // — nunca papel/perms/id. Funciona pra qualquer usuário, admin ou não.\n' +
+'    if (body.acao === "atualizarPerfil"){\n' +
+'      var quemEdita = buscarUsuario_(body.userId);\n' +
+'      var linhaPerfil = null;\n' +
+'      var linhasPerfil = lerFolha_("Usuarios");\n' +
+'      for (var ip=0; ip<linhasPerfil.length; ip++){\n' +
+'        if (linhasPerfil[ip].obj.id === body.userId){ linhaPerfil = linhasPerfil[ip]; break; }\n' +
+'      }\n' +
+'      if (!quemEdita || !linhaPerfil){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não encontrado"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var novoNome = String(body.nome || "").trim();\n' +
+'      var novoEmail = String(body.email || "").trim().toLowerCase();\n' +
+'      if (!novoNome || novoEmail.indexOf("@") === -1){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"nome/e-mail inválidos"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      for (var ie=0; ie<linhasPerfil.length; ie++){\n' +
+'        if (linhasPerfil[ie].obj.id !== body.userId && String(linhasPerfil[ie].obj.email || "").trim().toLowerCase() === novoEmail){\n' +
+'          return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"este e-mail já está cadastrado"}))\n' +
+'            .setMimeType(ContentService.MimeType.JSON);\n' +
+'        }\n' +
+'      }\n' +
+'      linhaPerfil.obj.nome = novoNome;\n' +
+'      linhaPerfil.obj.email = novoEmail;\n' +
+'      if (typeof body.senha === "string" && body.senha){\n' +
+'        var saltPerfil = gerarSalt_();\n' +
+'        linhaPerfil.obj.senhaSalt = saltPerfil;\n' +
+'        linhaPerfil.obj.senhaHash = hashSenha_(body.senha, saltPerfil);\n' +
+'      }\n' +
+'      delete linhaPerfil.obj.senha;\n' +
+'      gravarLinha_("Usuarios", linhaPerfil.row, linhaPerfil.obj);\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true, usuario: semCamposSenha_(linhaPerfil.obj)}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
 '    if (body.acao === "escanearPendentes"){\n' +
 '      if (!ehAdmin_(solicitante)){\n' +
 '        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
@@ -2438,7 +2493,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 9</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 10</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2775,18 +2830,33 @@ document.addEventListener('click', e => {
       if(!email.includes('@')){ toast('Informe um e-mail válido.','error'); break; }
       if(getUsuarios().some(y => y.id !== x.id && y.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); break; }
       if(senha && senha.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); break; }
-      // ITEM 11: o navegador não guarda mais a senha de ninguém (nem em hash) —
-      // só enviamos "senha" quando o campo foi preenchido de propósito, pra
-      // definir uma NOVA senha. O servidor faz o hash antes de gravar.
-      DB.set('Usuarios', DB.get('Usuarios').map(y => {
-        if(y.id !== x.id) return y;
-        const atualizado = Object.assign({}, y, {nome, email});
-        if(senha) atualizado.senha = senha; else delete atualizado.senha;
-        return atualizado;
-      }));
-      fecharModal();
-      toast('Dados do usuário atualizados.');
-      if(x.id === u.id) renderApp(); else renderUsuarios();
+      if(x.id === u.id){
+        // ITEM 12: editando o PRÓPRIO perfil — vai pelo endpoint dedicado,
+        // que funciona pra qualquer usuário (admin ou não) e só altera
+        // nome/e-mail/senha da própria conta.
+        Sync.atualizarPerfil(u.id, nome, email, senha).then(res => {
+          if(res && res.ok && res.usuario){
+            guardarFolhaSeguro('Usuarios', mesclarRows(DB.get('Usuarios'), [res.usuario]).map(normUserRow));
+            fecharModal();
+            toast('Dados do usuário atualizados.');
+            renderApp();
+          } else {
+            toast((res && res.erro) || 'Não foi possível atualizar os dados.','error');
+          }
+        }).catch(() => toast('Não foi possível conectar ao servidor.','error'));
+      } else {
+        // Admin editando outro usuário — continua pelo caminho geral
+        // (gravação da aba "Usuarios" já é restrita a admin no servidor).
+        DB.set('Usuarios', DB.get('Usuarios').map(y => {
+          if(y.id !== x.id) return y;
+          const atualizado = Object.assign({}, y, {nome, email});
+          if(senha) atualizado.senha = senha; else delete atualizado.senha;
+          return atualizado;
+        }));
+        fecharModal();
+        toast('Dados do usuário atualizados.');
+        renderUsuarios();
+      }
       break;
     }
     case 'imprimir-doc': {
