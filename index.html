@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 8;
+const APP_VERSAO = 9;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 // REMOÇÃO (item 10): a busca automática de GAS_URL na aba "Settings" via
@@ -678,6 +678,20 @@ const Sync = {
     const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
     return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify(corpoComUsuario_({acao:'escanearPendentes'}))})
+      .then(r => r.json());
+  },
+  /* ITEM 11: login e troca de senha verificados no servidor — a senha nunca
+     mais é comparada localmente (o doGet nem devolve mais esse campo). */
+  login(email, senha){
+    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
+    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({acao:'login', email, senha})})
+      .then(r => r.json());
+  },
+  trocarSenha(userId, senhaAtual, senhaNova){
+    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
+    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_({acao:'trocarSenha', userId, senhaAtual, senhaNova}))})
       .then(r => r.json());
   },
   async pull(){
@@ -1979,10 +1993,11 @@ function renderExcluidos(){
 /* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 8)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 9)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn) para a tela\n' +
-'   de login buscar dados/logotipo mesmo sem CORS.\n' +
+'   de login buscar dados/logotipo mesmo sem CORS. NUNCA\n' +
+'   devolve campos de senha (senha/senhaHash/senhaSalt).\n' +
 ' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
 '   subpasta para cada pasta do app (espelhada).\n' +
 ' - Autorizacao no servidor (admin/permissoes), dono de\n' +
@@ -1997,10 +2012,14 @@ const SCRIPT_GAS =
 '   linha inteira - evita que um push atrasado apague\n' +
 '   campos (ex.: driveId) que outro push mais recente ja\n' +
 '   tinha gravado (ver Documentos).\n' +
+' - Senha nunca fica em texto puro: so senhaHash+senhaSalt\n' +
+'   (SHA-256) sao gravados. Login (acao "login") e troca de\n' +
+'   senha (acao "trocarSenha") sao verificados aqui, no\n' +
+'   servidor - o navegador nunca compara senha sozinho.\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n' +
-'var VERSAO = 8;\n' +
+'var VERSAO = 9;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2061,6 +2080,54 @@ const SCRIPT_GAS =
 '  if (ehAdmin_(u)) return true;\n' +
 '  var perms = u.perms || [];\n' +
 '  return perms.indexOf(chave) !== -1;\n' +
+'}\n' +
+'\n' +
+'// ---------- SENHA: hash + salt no servidor (item 11) ----------\n' +
+'// Antes, a senha ficava em texto puro na aba "Usuarios", e o doGet devolvia\n' +
+'// essa aba inteira sem checagem nenhuma — qualquer pessoa com a URL /exec\n' +
+'// conseguia ler a senha de todos os usuários, mesmo sem estar logada. Agora:\n' +
+'// 1) nunca guardamos "senha" em texto puro — só "senhaHash"+"senhaSalt";\n' +
+'// 2) o doGet nunca devolve senha/senhaHash/senhaSalt pra ninguém;\n' +
+'// 3) o login é verificado aqui no servidor (acao "login"), comparando o\n' +
+'//    hash, e só devolve o usuário (sem nenhum campo de senha) se bater.\n' +
+'function gerarSalt_(){\n' +
+'  return Utilities.getUuid();\n' +
+'}\n' +
+'function hashSenha_(senha, salt){\n' +
+'  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(senha) + "::" + String(salt));\n' +
+'  var hex = "";\n' +
+'  for (var i=0;i<bytes.length;i++){\n' +
+'    var v = (bytes[i] + 256) % 256;\n' +
+'    var h = v.toString(16);\n' +
+'    hex += (h.length === 1 ? "0" + h : h);\n' +
+'  }\n' +
+'  return hex;\n' +
+'}\n' +
+'function semCamposSenha_(u){\n' +
+'  var copia = JSON.parse(JSON.stringify(u));\n' +
+'  delete copia.senha;\n' +
+'  delete copia.senhaHash;\n' +
+'  delete copia.senhaSalt;\n' +
+'  return copia;\n' +
+'}\n' +
+'// Transforma cada linha recebida para a aba "Usuarios": se vier uma "senha"\n' +
+'// em texto puro (criação de usuário, ou admin/próprio usuário definindo uma\n' +
+'// nova senha), calculamos hash+salt aqui e NUNCA deixamos "senha" chegar a\n' +
+'// ser gravada na planilha. Se a linha não trouxer "senha" (edição de nome/\n' +
+'// e-mail sem trocar senha), simplesmente não mexemos nela — o merge por id\n' +
+'// que já existe preserva o hash/salt já salvos.\n' +
+'function prepararLinhasUsuarios_(rows){\n' +
+'  return (rows || []).map(function(r){\n' +
+'    if (!r || typeof r !== "object") return r;\n' +
+'    var copia = Object.assign({}, r);\n' +
+'    if (typeof copia.senha === "string" && copia.senha){\n' +
+'      var salt = gerarSalt_();\n' +
+'      copia.senhaSalt = salt;\n' +
+'      copia.senhaHash = hashSenha_(copia.senha, salt);\n' +
+'    }\n' +
+'    delete copia.senha;\n' +
+'    return copia;\n' +
+'  });\n' +
 '}\n' +
 'function registrarExclusao_(usuarioNome, tipo, nome){\n' +
 '  try{\n' +
@@ -2141,7 +2208,9 @@ const SCRIPT_GAS =
 '  var out = {};\n' +
 '  out.__v = VERSAO;\n' +
 '  FOLHAS.forEach(function(f){\n' +
-'    out[f] = lerFolha_(f).map(function(r){ return r.obj; });\n' +
+'    var rows = lerFolha_(f).map(function(r){ return r.obj; });\n' +
+'    if (f === "Usuarios") rows = rows.map(semCamposSenha_);\n' +
+'    out[f] = rows;\n' +
 '  });\n' +
 '  var json = JSON.stringify(out);\n' +
 '  var cb = e && e.parameter && e.parameter.callback;\n' +
@@ -2197,6 +2266,56 @@ const SCRIPT_GAS =
 '\n' +
 '    if (body.acao === "ensureRoot"){\n' +
 '      pastaDriveRaiz_();\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
+'    // ITEM 11: login verificado no servidor. O cliente manda e-mail/senha em\n' +
+'    // texto puro (protegido pelo HTTPS da própria URL /exec, igual qualquer\n' +
+'    // formulário de login normal), calculamos o hash aqui com o salt salvo\n' +
+'    // e comparamos — a senha nunca é gravada nem devolvida em lugar nenhum.\n' +
+'    if (body.acao === "login"){\n' +
+'      var emailBusca = String(body.email || "").trim().toLowerCase();\n' +
+'      var linhasUsr = lerFolha_("Usuarios");\n' +
+'      var achado = null;\n' +
+'      for (var iu=0; iu<linhasUsr.length; iu++){\n' +
+'        if (String(linhasUsr[iu].obj.email || "").trim().toLowerCase() === emailBusca){ achado = linhasUsr[iu].obj; break; }\n' +
+'      }\n' +
+'      var falhaLogin = ContentService.createTextOutput(JSON.stringify({ok:false, erro:"E-mail ou senha inválidos."}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'      if (!achado || !achado.senhaHash || !achado.senhaSalt) return falhaLogin;\n' +
+'      if (hashSenha_(body.senha || "", achado.senhaSalt) !== achado.senhaHash) return falhaLogin;\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:true, usuario: semCamposSenha_(achado)}))\n' +
+'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    }\n' +
+'\n' +
+'    // ITEM 11: troca da própria senha, também verificada aqui — a senha\n' +
+'    // atual é conferida no servidor antes de aceitar a nova (antes, essa\n' +
+'    // checagem era só no navegador, comparando com um campo que nem chega\n' +
+'    // mais ao cliente).\n' +
+'    if (body.acao === "trocarSenha"){\n' +
+'      var quemTroca = buscarUsuario_(body.userId);\n' +
+'      var linha = null;\n' +
+'      var linhasU2 = lerFolha_("Usuarios");\n' +
+'      for (var it=0; it<linhasU2.length; it++){ if (linhasU2[it].obj.id === body.userId){ linha = linhasU2[it]; break; } }\n' +
+'      if (!quemTroca || !linha){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não encontrado"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      if (!linha.obj.senhaHash || hashSenha_(body.senhaAtual || "", linha.obj.senhaSalt) !== linha.obj.senhaHash){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"Senha atual incorreta."}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var novaSenha = String(body.senhaNova || "");\n' +
+'      if (novaSenha.length < 6){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"A nova senha deve ter 6+ caracteres."}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var novoSalt = gerarSalt_();\n' +
+'      linha.obj.senhaSalt = novoSalt;\n' +
+'      linha.obj.senhaHash = hashSenha_(novaSenha, novoSalt);\n' +
+'      delete linha.obj.senha;\n' +
+'      gravarLinha_("Usuarios", linha.row, linha.obj);\n' +
 '      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
@@ -2259,7 +2378,9 @@ const SCRIPT_GAS =
 '    lerFolha_(body.folha).forEach(function(item){\n' +
 '      if (item.obj && item.obj.id) existentesMap[item.obj.id] = item.obj;\n' +
 '    });\n' +
-'    var rows = (body.rows || []).map(function(r){\n' +
+'    var linhasRecebidas = body.rows || [];\n' +
+'    if (body.folha === "Usuarios") linhasRecebidas = prepararLinhasUsuarios_(linhasRecebidas);\n' +
+'    var rows = linhasRecebidas.map(function(r){\n' +
 '      if (r && r.id && existentesMap[r.id]) {\n' +
 '        return Object.assign({}, existentesMap[r.id], r);\n' +
 '      }\n' +
@@ -2317,7 +2438,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 8</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 9</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2654,9 +2775,15 @@ document.addEventListener('click', e => {
       if(!email.includes('@')){ toast('Informe um e-mail válido.','error'); break; }
       if(getUsuarios().some(y => y.id !== x.id && y.email.toLowerCase() === email)){ toast('Este e-mail já está cadastrado.','error'); break; }
       if(senha && senha.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); break; }
-      DB.set('Usuarios', DB.get('Usuarios').map(y => y.id === x.id ? Object.assign({}, y, {
-        nome: nome, email: email, senha: senha ? senha : y.senha
-      }) : y));
+      // ITEM 11: o navegador não guarda mais a senha de ninguém (nem em hash) —
+      // só enviamos "senha" quando o campo foi preenchido de propósito, pra
+      // definir uma NOVA senha. O servidor faz o hash antes de gravar.
+      DB.set('Usuarios', DB.get('Usuarios').map(y => {
+        if(y.id !== x.id) return y;
+        const atualizado = Object.assign({}, y, {nome, email});
+        if(senha) atualizado.senha = senha; else delete atualizado.senha;
+        return atualizado;
+      }));
       fecharModal();
       toast('Dados do usuário atualizados.');
       if(x.id === u.id) renderApp(); else renderUsuarios();
@@ -2851,12 +2978,19 @@ document.addEventListener('click', e => {
     }
     case 'salvar-senha': {
       const atual = $('#senhaAtual').value, nova = $('#senhaNova').value, conf = $('#senhaConf').value;
-      if(atual !== u.senha){ toast('Senha atual incorreta.','error'); return; }
       if(nova.length < 6){ toast('A nova senha deve ter 6+ caracteres.','error'); return; }
       if(nova !== conf){ toast('A confirmação não confere.','error'); return; }
-      DB.set('Usuarios', DB.get('Usuarios').map(x => x.id === u.id ? Object.assign({}, x, {senha:nova}) : x));
-      ['senhaAtual','senhaNova','senhaConf'].forEach(i => $('#'+i).value = '');
-      toast('Senha alterada com sucesso.'); break;
+      // ITEM 11: a senha atual agora é verificada no servidor (o navegador
+      // não tem mais acesso a nenhum campo de senha pra comparar sozinho).
+      Sync.trocarSenha(u.id, atual, nova).then(res => {
+        if(res && res.ok){
+          ['senhaAtual','senhaNova','senhaConf'].forEach(i => $('#'+i).value = '');
+          toast('Senha alterada com sucesso.');
+        } else {
+          toast((res && res.erro) || 'Não foi possível alterar a senha.','error');
+        }
+      }).catch(() => toast('Não foi possível conectar ao servidor.','error'));
+      break;
     }
     case 'copiar-script':
       navigator.clipboard.writeText(SCRIPT_GAS).then(() => toast('Código Apps Script copiado!','info')); break;
@@ -2907,34 +3041,29 @@ document.addEventListener('change', e => {
   }
 });
 
-/* LOGIN: busca os usuários na planilha (fetch ou JSONP) antes de negar. */
+/* LOGIN: verificado no servidor (item 11) — a senha nunca é comparada no
+   navegador nem fica disponível localmente; só o backend conhece o hash. */
 $('#loginForm').addEventListener('submit', e => {
   e.preventDefault();
   const email = $('#loginEmail').value.trim().toLowerCase();
   const senha = $('#loginSenha').value;
-  const tenta = () => {
-    const usr = getUsuarios().find(x => x.email.toLowerCase() === email && x.senha === senha);
-    if(usr){
+  const btn = $('#loginForm').querySelector('button[type="submit"]');
+  $('#loginErro').textContent = '';
+  if(btn) btn.disabled = true;
+  Sync.login(email, senha).then(res => {
+    if(res && res.ok && res.usuario){
+      const usr = res.usuario;
+      guardarFolhaSeguro('Usuarios', mesclarRows(DB.get('Usuarios'), [usr]).map(normUserRow));
       session = { userId: usr.id };
       store.set('rio_session', JSON.stringify(session));
-      $('#loginErro').textContent = '';
       iniciarApp();
       toast('Bem-vindo(a), ' + usr.nome + '!');
-      return true;
+    } else {
+      $('#loginErro').textContent = (res && res.erro) || 'E-mail ou senha inválidos.';
     }
-    return false;
-  };
-  if(tenta()) return;
-  $('#loginErro').textContent = '';
-  const st = $('#loginStatus');
-  Sync.pull().then(data => {
-    if(data && typeof data === 'object') Sync.applyData(data);
-    aplicarMarca(); mostrarLogin();
-    if(!tenta()) $('#loginErro').textContent = 'E-mail ou senha inválidos.';
   }).catch(() => {
-    aplicarMarca(); mostrarLogin();
     $('#loginErro').textContent = 'Não foi possível verificar a planilha. Tente novamente.';
-  });
+  }).finally(() => { if(btn) btn.disabled = false; });
 });
 
 $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
