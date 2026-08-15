@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 10;
+const APP_VERSAO = 11;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 // REMOÇÃO (item 10): a busca automática de GAS_URL na aba "Settings" via
@@ -528,7 +528,6 @@ function categoria(d){
 function catInfo(d){ return CATS[categoria(d)]; }
 
 /* ============ DB / SYNC ============ */
-const pendingArquivos = {};
 const DB = {
   get(f){ try{ const raw = store.get('rio_'+f); return raw ? JSON.parse(raw) : []; }catch(e){ return []; } },
   set(f, rows){ guardarFolhaSeguro(f, rows); Sync.push(f, rows); }
@@ -566,10 +565,6 @@ function agendarPull(){
   pullTimer = setTimeout(() => {
     Sync.pull().then(data => {
       if(Sync.applyData(data)){
-        Object.keys(pendingArquivos).forEach(id => {
-          const d = DB.get('Documentos').find(x => x.id === id);
-          if(d && d.driveId) delete pendingArquivos[id];
-        });
         if(!$('#modalOverlay') || $('#modalOverlay').classList.contains('hidden')){
           if(currentUser()) renderApp();
           else { session = null; store.set('rio_session',''); mostrarLogin(); }
@@ -591,22 +586,13 @@ function pullViaJSONP(url){
   });
 }
 let backendAntigo = false;
-/* Ids de documentos cujo upload já foi mandado ao backend e ainda não voltou
-   com o driveId confirmado. Evita reenviar o mesmo base64 em pushes seguintes
-   (ex.: renomear outro arquivo enquanto o upload ainda processa) — essa era a
-   causa da duplicação de arquivos no Google Drive: o servidor recebia o mesmo
-   conteúdo de novo, sem driveId, e criava outro arquivo. */
-const enviandoArquivos = new Set();
 /* CORREÇÃO (item 8): antes, cada Sync.push disparava um fetch imediatamente,
-   sem esperar o anterior da mesma aba terminar. Se duas chamadas (ex.: dois
-   uploads seguidos, ou um upload + qualquer outra edição em "Documentos")
-   saíssem quase juntas, a ordem de chegada no servidor não era garantida —
-   e o push mais "atrasado" podia sobrescrever no Sheets o resultado do mais
-   recente (perdendo driveId de um upload que já tinha terminado no Drive).
+   sem esperar o anterior da mesma aba terminar. Se duas chamadas saíssem
+   quase juntas, a ordem de chegada no servidor não era garantida — e o push
+   mais "atrasado" podia sobrescrever no Sheets o resultado do mais recente.
    Agora enfileiramos os pushes por aba: o próximo só é enviado depois que o
-   anterior da mesma aba retornar, o que evita essa inversão de ordem. Isso é
-   um reforço no cliente — a correção definitiva (merge por id) está no
-   servidor, no Code.gs, para o caso de a rede ainda assim reordenar algo. */
+   anterior da mesma aba retornar. Isso é um reforço no cliente — a correção
+   definitiva (merge por id) está no servidor, no Code.gs. */
 const filaPush_ = {};
 function corpoComUsuario_(extra){
   const u = currentUser();
@@ -622,23 +608,17 @@ const Sync = {
   push(f, rows){
     const url = this.url(); if(!url) return;
     let out = rows;
+    // ITEM 13: o conteúdo do arquivo (base64) NUNCA mais é enviado por aqui —
+    // vai só pelo Sync.uploadArquivo, direto pro Drive (ver mais abaixo). Uma
+    // célula do Google Sheets tem limite de ~50.000 caracteres; mandar o
+    // arquivo dentro da linha de "Documentos" estourava esse limite e
+    // derrubava a gravação inteira com uma exceção no servidor, mesmo para
+    // arquivos moderados (~35 KB já é o suficiente pra passar do limite em
+    // base64). Localmente ele continua guardado (pré-visualização), só não
+    // sai mais na rede por este caminho.
     if(f === 'Documentos'){
       out = rows.map(r => {
-        if(r.arquivo && !r.driveId){
-          if(enviandoArquivos.has(r.id)){
-            const c = Object.assign({}, r); delete c.arquivo; return c;
-          }
-          enviandoArquivos.add(r.id);
-          return r;
-        }
-        if(!r.arquivo && pendingArquivos[r.id]){
-          if(enviandoArquivos.has(r.id)){
-            const c = Object.assign({}, r); delete c.arquivo; return c;
-          }
-          enviandoArquivos.add(r.id);
-          return Object.assign({}, r, {arquivo: pendingArquivos[r.id]});
-        }
-        enviandoArquivos.delete(r.id);
+        if(!r.arquivo) return r;
         const c = Object.assign({}, r); delete c.arquivo; return c;
       });
     }
@@ -650,6 +630,17 @@ const Sync = {
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
+  /* ITEM 13: envia o conteúdo do arquivo direto pro Drive — não passa mais
+     pela planilha. Usa fetch legível (não "no-cors") porque precisamos
+     mesmo saber se deu certo, com o driveId/driveUrl de volta, ou o motivo
+     exato da falha (ex.: erro de permissão do Drive), pra mostrar pro
+     usuário em vez de falhar silenciosamente como antes. */
+  uploadArquivo(payload){
+    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
+    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_(Object.assign({acao:'uploadArquivo'}, payload)))})
+      .then(r => r.json());
+  },
   ensureDriveRoot(){
     const url = this.url(); if(!url) return;
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -867,13 +858,12 @@ function obterBuffer(d){
 function salvarArquivoBin(d, dataUrl, titulo){
   const docs = DB.get('Documentos');
   const tamanho = Math.round(dataUrl.length * 0.75);
-  if(dataUrl.length <= 1600000){
+  if(!Sync.url()){
     DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now()}) : x));
     return true;
   }
-  if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
-  pendingArquivos[d.id] = dataUrl;
-  DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: '', tamanho: tamanho, atualizadoEm: Date.now()}) : x));
+  DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now(), enviandoDrive:true}) : x));
+  enviarArquivoAoDrive_(d.id, d.pastaId, titulo || d.titulo, d.ext, d.mime, dataUrl);
   return true;
 }
 function fileToJpegDataUrl(file, maxDim, quality){
@@ -1112,17 +1102,39 @@ function renderCamPages(){
     ? camPages.map((p, i) => '<div class="cam-item"><img src="' + p + '" alt="Página ' + (i+1) + '"><button class="btn-ic danger" data-action="cam-remove" data-idx="' + i + '" title="Remover página"><i class="fa-solid fa-xmark"></i></button></div>').join('')
     : '<p class="modal-sub" style="margin:6px 0">Nenhuma página capturada ainda.</p>';
 }
+/* ITEM 13: envia o conteúdo do arquivo pro Drive pelo endpoint dedicado,
+   fora da planilha. Atualiza o documento local com driveId/driveUrl quando
+   terminar, ou marca o erro (mostrado pro usuário) se falhar. */
+function enviarArquivoAoDrive_(docId, pastaId, titulo, ext, mime, dataUrl){
+  const u = currentUser();
+  Sync.uploadArquivo({userId: u ? u.id : '', pastaId, titulo, ext, mime, arquivo: dataUrl}).then(res => {
+    const docs = DB.get('Documentos');
+    if(res && res.ok){
+      DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {arquivo:'', driveId: res.driveId, driveUrl: res.driveUrl, enviandoDrive:false, erroUpload:''}) : x));
+    } else {
+      DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {enviandoDrive:false, erroUpload: (res && res.erro) || 'Falha ao enviar para o Drive.'}) : x));
+      toast('Falha ao enviar "' + titulo + '" para o Drive: ' + ((res && res.erro) || 'erro desconhecido'), 'error');
+    }
+    renderItens();
+  }).catch(() => {
+    const docs = DB.get('Documentos');
+    DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {enviandoDrive:false, erroUpload:'Não foi possível conectar ao servidor.'}) : x));
+    toast('Não foi possível conectar ao servidor para enviar "' + titulo + '".','error');
+    renderItens();
+  });
+}
 function salvarDocArquivo(base, dataUrl){
+  const tamanho = Math.round(dataUrl.length * 0.75);
   const docs = DB.get('Documentos');
-  if(dataUrl.length <= 1600000){
-    docs.push(Object.assign(base, {arquivo: dataUrl, tamanho: Math.round(dataUrl.length * 0.75)}));
+  if(!Sync.url()){
+    // Modo local (sem integração Google configurada) — fica só no navegador.
+    docs.push(Object.assign({}, base, {arquivo: dataUrl, tamanho}));
     DB.set('Documentos', docs);
     return true;
   }
-  if(!Sync.url()){ toast('Arquivo grande demais para o modo local (~1,2 MB). Configure a integração Google.','error'); return false; }
-  pendingArquivos[base.id] = dataUrl;
-  docs.push(Object.assign(base, {arquivo: '', tamanho: Math.round(dataUrl.length * 0.75)}));
+  docs.push(Object.assign({}, base, {arquivo: dataUrl, tamanho, enviandoDrive:true}));
   DB.set('Documentos', docs);
+  enviarArquivoAoDrive_(base.id, base.pastaId, base.titulo, base.ext, base.mime, dataUrl);
   return true;
 }
 
@@ -1620,10 +1632,13 @@ function renderItens(){
         const ci = catInfo(d);
         const pd = permsDoc(d);
         const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
+        const statusDrive = d.enviandoDrive ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…'
+          : d.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(d.erroUpload) + '"></i> Falha no envio'
+          : (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '');
         return '<div class="item-row' + selCls('doc', d.id) + '">' +
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-          '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '') + '</small></div>' +
+          '<div class="item-info"><strong>' + esc(d.titulo) + '</strong><small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + statusDrive + '</small></div>' +
           '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
           '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
       }).join('');
@@ -2002,7 +2017,7 @@ function renderExcluidos(){
 /* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 10)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 11)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn). NUNCA devolve\n' +
 '   campos de senha (senha/senhaHash/senhaSalt).\n' +
@@ -2018,7 +2033,7 @@ const SCRIPT_GAS =
 ' - Escritas em qualquer aba fazem merge por "id" com o\n' +
 '   que ja existe na planilha, em vez de sobrescrever a\n' +
 '   linha inteira - evita perder campos (ex.: driveId) que\n' +
-'   um push mais recente ja tinha gravado (ver Documentos).\n' +
+'   um push mais recente ja tinha gravado.\n' +
 ' - Senha nunca fica em texto puro: so senhaHash+senhaSalt\n' +
 '   (SHA-256) sao gravados. Login (acao "login") e troca de\n' +
 '   senha (acao "trocarSenha") sao verificados aqui, no\n' +
@@ -2030,11 +2045,17 @@ const SCRIPT_GAS =
 ' - migrarSenhasParaHash_UMA_VEZ(): rodar manualmente uma\n' +
 '   vez no editor do Apps Script para converter senhas de\n' +
 '   usuarios antigos (texto puro) para hash+salt.\n' +
+' - Endpoint uploadArquivo: grava o arquivo direto no Drive\n' +
+'   (fora da planilha). Uma celula do Sheets tem limite de\n' +
+'   ~50.000 caracteres - mandar o arquivo em base64 dentro\n' +
+'   da linha de "Documentos" (como antes) estourava esse\n' +
+'   limite e derrubava a gravacao inteira com excecao, para\n' +
+'   qualquer arquivo acima de ~35 KB. Agora so o driveId e o\n' +
+'   driveUrl (curtos) chegam a planilha.\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
-' NOVA VERSAO da implantacao (Gerenciar implantacoes), e\n' +
-' rode migrarSenhasParaHash_UMA_VEZ() manualmente uma vez.\n' +
+' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n' +
-'var VERSAO = 10;\n' +
+'var VERSAO = 11;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2407,6 +2428,41 @@ const SCRIPT_GAS =
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
 '\n' +
+'    // ITEM 13: correção definitiva do limite de tamanho — antes, o arquivo\n' +
+'    // (base64) ia dentro da linha gravada como célula única na planilha, e o\n' +
+'    // Google Sheets tem um limite de ~50.000 caracteres por célula. Qualquer\n' +
+'    // arquivo acima de ~35 KB (pouco mais de 46.000 caracteres em base64) já\n' +
+'    // estourava esse limite e o "sh.getRange(...).setValues(...)" lançava uma\n' +
+'    // exceção — derrubando o doPost inteiro, não só aquele documento. Agora o\n' +
+'    // arquivo é gravado direto no Drive por este endpoint dedicado (o corpo\n' +
+'    // do POST não tem esse limite de 50 mil caracteres), e a planilha nunca\n' +
+'    // recebe nada além do "driveId"/"driveUrl" resultantes, que são curtos.\n' +
+'    if (body.acao === "uploadArquivo"){\n' +
+'      if (!solicitante){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não autenticado"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      var dataUrl = String(body.arquivo || "");\n' +
+'      var mArq = dataUrl.match(/^data:(.*?);base64,([\\s\\S]*)$/);\n' +
+'      if (!mArq){\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"arquivo inválido"}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'      try {\n' +
+'        var cacheUp = {};\n' +
+'        var folderUp = ensureDriveFolder_(body.pastaId, cacheUp);\n' +
+'        var bytesUp = Utilities.base64Decode(mArq[2]);\n' +
+'        var nomeArquivo = (body.titulo || "arquivo") + "." + (body.ext || "bin");\n' +
+'        var fileUp = folderUp.createFile(Utilities.newBlob(bytesUp, mArq[1], nomeArquivo));\n' +
+'        fileUp.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:true, driveId: fileUp.getId(), driveUrl: fileUp.getUrl()}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      } catch(eUp) {\n' +
+'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:String(eUp && eUp.message || eUp)}))\n' +
+'          .setMimeType(ContentService.MimeType.JSON);\n' +
+'      }\n' +
+'    }\n' +
+'\n' +
 '    if (body.acao === "escanearPendentes"){\n' +
 '      if (!ehAdmin_(solicitante)){\n' +
 '        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
@@ -2525,7 +2581,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 10</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 11</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2704,7 +2760,6 @@ document.addEventListener('click', e => {
           marcarExcluido_('Documentos', did);
           if(d.driveId) Sync.excluirDrive('arquivo', d.driveId, d.titulo);
           DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== did));
-          delete pendingArquivos[did];
           docsOk++;
         });
         limparSelecao();
@@ -2922,7 +2977,6 @@ document.addEventListener('click', e => {
         marcarExcluido_('Documentos', id);
         if(d && d.driveId) Sync.excluirDrive('arquivo', d.driveId, d.titulo);
         DB.set('Documentos', DB.get('Documentos').filter(x => x.id !== id));
-        delete pendingArquivos[id];
         toast('Arquivo excluído.'); renderItens();
       }); break;
     }
