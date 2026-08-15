@@ -2027,8 +2027,12 @@ const SCRIPT_GAS =
 '   nao) pode editar o proprio nome/e-mail/senha, sem\n' +
 '   precisar de acesso de admin - so mexe na propria linha\n' +
 '   e nunca em papel/perms.\n' +
+' - migrarSenhasParaHash_UMA_VEZ(): rodar manualmente uma\n' +
+'   vez no editor do Apps Script para converter senhas de\n' +
+'   usuarios antigos (texto puro) para hash+salt.\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
-' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
+' NOVA VERSAO da implantacao (Gerenciar implantacoes), e\n' +
+' rode migrarSenhasParaHash_UMA_VEZ() manualmente uma vez.\n' +
 '=====================================================\n' +
 'var VERSAO = 10;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
@@ -2139,6 +2143,34 @@ const SCRIPT_GAS =
 '    delete copia.senha;\n' +
 '    return copia;\n' +
 '  });\n' +
+'}\n' +
+'\n' +
+'// ---------- MIGRAÇÃO DE SENHAS (rodar UMA VEZ, manualmente) ----------\n' +
+'// Usuários criados antes da v9 ainda têm a senha em texto puro na coluna\n' +
+'// "senha". A partir da v9, o login só reconhece "senhaHash"+"senhaSalt" —\n' +
+'// por isso ninguém consegue mais entrar até essa migração rodar.\n' +
+'// COMO USAR: no editor do Apps Script, selecione esta função no menu\n' +
+'// suspenso ao lado do botão "Executar" (topo da tela) e clique em\n' +
+'// "Executar". Autorize se for pedido. Isso NÃO redefine a senha de\n' +
+'// ninguém — só transforma a senha que já existia em hash, preservando o\n' +
+'// valor. Depois de rodar (confira o log em "Execuções"), o login volta a\n' +
+'// funcionar com a MESMA senha de antes. Pode rodar mais de uma vez sem\n' +
+'// problema — usuários já migrados são simplesmente ignorados.\n' +
+'function migrarSenhasParaHash_UMA_VEZ(){\n' +
+'  var linhas = lerFolha_("Usuarios");\n' +
+'  var migrados = 0;\n' +
+'  linhas.forEach(function(item){\n' +
+'    var u = item.obj;\n' +
+'    if (typeof u.senha === "string" && u.senha && !u.senhaHash){\n' +
+'      var salt = gerarSalt_();\n' +
+'      u.senhaHash = hashSenha_(u.senha, salt);\n' +
+'      u.senhaSalt = salt;\n' +
+'      delete u.senha;\n' +
+'      gravarLinha_("Usuarios", item.row, u);\n' +
+'      migrados++;\n' +
+'    }\n' +
+'  });\n' +
+'  Logger.log("Usuários migrados para hash: " + migrados);\n' +
 '}\n' +
 'function registrarExclusao_(usuarioNome, tipo, nome){\n' +
 '  try{\n' +
