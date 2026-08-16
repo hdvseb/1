@@ -1535,6 +1535,7 @@ function renderDashboard(){
       '<div class="breadcrumb-row">' +
         '<div class="breadcrumb" id="breadcrumb"></div>' +
         '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
+        (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Selecionar todos</button>' : '') +
       '</div>' +
       '<div id="itens"></div>' +
     '</section>' +
@@ -1572,24 +1573,29 @@ function btnBaixar(d, permitido){
     ? '<button class="btn-ic" title="Baixar" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i></button>'
     : '<button class="btn-ic locked" title="Download não permitido pela sua permissão" disabled><i class="fa-solid fa-lock"></i></button>';
 }
+function itensVisiveis(){
+  const u = currentUser();
+  const q = state.search.trim().toLowerCase();
+  let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
+  let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
+  if(!state.currentFolderId && !ehAdmin(u)){
+    folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
+    docs = docs.filter(d => permsDoc(d).includes('visualizar'));
+  } else if(state.currentFolderId){
+    folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
+  }
+  docs = docs.filter(d => formatoVisivel(d, u));
+  if(q){
+    folders = folders.filter(p => p.nome.toLowerCase().includes(q));
+    docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
+  }
+  return {folders, docs};
+}
 function renderItens(){
   const el = $('#itens'); if(!el) return;
   try{
     const u = currentUser();
-    const q = state.search.trim().toLowerCase();
-    let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
-    let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
-    if(!state.currentFolderId && !ehAdmin(u)){
-      folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
-      docs = docs.filter(d => permsDoc(d).includes('visualizar'));
-    } else if(state.currentFolderId){
-      folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
-    }
-    docs = docs.filter(d => formatoVisivel(d, u));
-    if(q){
-      folders = folders.filter(p => p.nome.toLowerCase().includes(q));
-      docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
-    }
+    const {folders, docs} = itensVisiveis();
     const perms = permsAtuais();
     const usuarios = getUsuarios();
     const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
@@ -2729,6 +2735,12 @@ document.addEventListener('click', e => {
       if(!state.selecaoAtiva) state.selecao.clear();
       renderDashboard();
       break;
+    case 'selecionar-todos': {
+      const {docs} = itensVisiveis();
+      docs.forEach(d => state.selecao.add(selKey('doc', d.id)));
+      renderItens(); renderSelBar();
+      break;
+    }
     case 'toggle-sel': {
       const tipo = el.dataset.tipo, tid = el.dataset.id;
       const key = selKey(tipo, tid);
