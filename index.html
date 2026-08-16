@@ -39,7 +39,7 @@ button{font-family:inherit}
 .btn-ic.danger:hover{background:#fdeeee;border-color:var(--danger)}
 .btn-ic.locked{color:#9aa7c0;background:#f2f5fa;cursor:not-allowed}
 /* ===== login ===== */
-.login-screen{min-height:100vh;display:grid;place-items:center;background:linear-gradient(160deg,#0b2f7d 0%,#1552c2 55%,#2f7ae0 100%);padding:24px}
+.login-screen{min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:linear-gradient(160deg,#0b2f7d 0%,#1552c2 55%,#2f7ae0 100%);padding:24px}
 .login-card{background:#fff;border-radius:16px;padding:36px 34px;width:min(430px,94vw);box-shadow:0 24px 60px rgba(0,20,60,.35);animation:fadeUp .45s ease}
 .login-card img{width:210px;display:block;margin:0 auto 14px;object-fit:contain;max-height:90px}
 .login-card h1{font-size:20px;color:var(--heading);text-align:center;margin-bottom:18px}
@@ -89,6 +89,8 @@ button{font-family:inherit}
 .viewmenu-pop.open{display:block;animation:pop .18s ease}
 /* ===== menu de ações "três pontinhos" (usado no celular) ===== */
 .item-menu{position:relative;display:inline-flex}
+.item-menu>.btn-ic{background:var(--primary);border-color:var(--primary);color:#fff}
+.item-menu>.btn-ic:hover{background:var(--primary-dark);border-color:var(--primary-dark)}
 .item-menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:90;min-width:210px;display:none}
 .item-menu-pop.open{display:block;animation:pop .18s ease}
 .menu-line{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;text-align:left;padding:10px 12px;border-radius:8px;font:inherit;font-size:13.5px;font-weight:600;color:var(--text);cursor:pointer}
@@ -329,6 +331,10 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
   #syncBadge{display:none}
 }
 @media(max-width:700px){
+  .login-screen{padding:16px;align-items:center}
+  .login-card{padding:28px 22px;width:100%}
+  .login-card img{width:170px;max-height:74px}
+  .login-card h1{font-size:18px;margin-bottom:14px}
   .topbar{padding:0 12px;gap:8px;height:58px}
   .topbar .logo-rio{height:36px}
   .shell{min-height:calc(100vh - 58px)}
@@ -735,6 +741,13 @@ const Sync = {
     const u = currentUser();
     return chamarAcaoGet_({acao:'escanearPendentes', userId: u ? u.id : ''});
   },
+  /* ITEM 4: caminho inverso de escanearPendentes — pede ao backend a lista
+     de pastas/arquivos que estão cadastrados na planilha mas não existem
+     mais no Drive (foram excluídos direto por lá, fora do app). */
+  verificarOrfaos(){
+    const u = currentUser();
+    return chamarAcaoGet_({acao:'verificarOrfaos', userId: u ? u.id : ''});
+  },
   /* ITEM 11/14: login verificado no servidor, via GET+JSONP. A senha nunca
      sai do navegador em texto puro: primeiro buscamos o salt do e-mail
      informado, calculamos o hash aqui (Web Crypto), e só então mandamos o
@@ -873,6 +886,32 @@ function modalPendentesDrive(pastas, arquivos){
     '<p class="modal-sub" style="margin-top:-8px"><i class="fa-solid fa-circle-info"></i> Os itens importados entram na Raiz — você pode movê-los para as pastas corretas depois.</p>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Agora não</button>' +
     '<button class="btn btn-primary" data-action="importar-pendentes-drive"><i class="fa-solid fa-download"></i> Importar tudo</button></div>');
+}
+/* ITEM 4: sincronização manual (botão em Configurações, só admin) — pede ao
+   backend quais pastas/arquivos cadastrados no app já não existem mais no
+   Drive (apagados direto por lá) e oferece remover essas entradas órfãs do
+   app, pra ele ficar sempre igual ao Drive. */
+function sincronizarComDrive(){
+  const u = currentUser();
+  if(!u || !ehAdmin(u) || !Sync.url()){ toast('Configure a URL do backend primeiro.','error'); return; }
+  toast('Verificando itens no Drive…','info');
+  Sync.verificarOrfaos().then(res => {
+    if(!res || res.ok === false){ toast('Não foi possível verificar o Drive agora.','error'); return; }
+    const pastas = res.pastas || [], arquivos = res.arquivos || [];
+    if(!pastas.length && !arquivos.length){ toast('Tudo certo — o app já está igual ao Drive.'); return; }
+    modalOrfaosDrive(pastas, arquivos);
+  }).catch(() => toast('Não foi possível verificar o Drive agora.','error'));
+}
+function modalOrfaosDrive(pastas, arquivos){
+  window.__orfaosDriveTmp = {pastas, arquivos};
+  openModal('<h3><i class="fa-solid fa-triangle-exclamation ic-danger"></i> Itens que não existem mais no Drive</h3>' +
+    '<p class="modal-sub">Encontramos <b>' + pastas.length + ' pasta(s)</b> e <b>' + arquivos.length + ' arquivo(s)</b> cadastrados no app, mas que não existem mais no Google Drive (provavelmente excluídos direto por lá). Remover essas entradas do app para ficar igual ao Drive?</p>' +
+    '<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:13px">' +
+      pastas.map(p => '<div style="padding:3px 0"><i class="fa-solid fa-folder" style="color:var(--muted)"></i> ' + esc(p.nome) + '</div>').join('') +
+      arquivos.map(a => '<div style="padding:3px 0"><i class="fa-solid fa-file" style="color:var(--muted)"></i> ' + esc(a.titulo) + '</div>').join('') +
+    '</div>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Agora não</button>' +
+    '<button class="btn btn-danger" data-action="remover-orfaos-drive"><i class="fa-solid fa-broom"></i> Remover do app</button></div>');
 }
 function verificarVersao(){
   toast('Verificando versão do backend…','info');
@@ -1366,12 +1405,19 @@ function permsEff(userId, pasta){
   if(ehAdmin(u)) return ALL_PERMS.slice();
   const global = permsGlobais(u);
   const permRows = getPermissoes();
-  const pastas = DB.get('Pastas');
   let cur = pasta, grant = null, blocked = false;
   while(cur){
-    if(cur.criadaPor === userId){ grant = 'ALL'; break; }
     const e = permRows.find(p => p.pastaId === cur.id && p.userId === userId);
     if(e){ grant = e.perms || []; break; }
+    // ITEM 2/3: antes, quem CRIOU a pasta ganhava acesso total (ALL_PERMS)
+    // dentro dela automaticamente, mesmo sem permissão explícita concedida
+    // pelo admin — isso ignorava as permissões globais reais do usuário
+    // (ex.: um usuário com permissão só de Visualizar/Enviar/Criar pasta
+    // conseguia Baixar/Imprimir/Mover/Editar/Excluir dentro das próprias
+    // pastas). Agora ser dono da pasta só interrompe a herança de
+    // permissões de pastas superiores — as permissões globais do usuário
+    // continuam valendo normalmente, sem elevação automática.
+    if(cur.criadaPor === userId) break;
     if(!ownerIsAdmin(cur)){ blocked = true; break; }
     cur = pastaPorId(cur.parentId);
   }
@@ -1389,10 +1435,11 @@ function permsAtuais(){
 function permsDoc(d){
   const u = currentUser();
   if(ehAdmin(u)) return ALL_PERMS.slice();
-  // O usuário que enviou o documento sempre tem acesso completo a ele,
-  // independentemente das permissões da pasta onde está guardado.
-  if(d.criadoPor === u.id) return ALL_PERMS.slice();
   const global = permsGlobais(u);
+  // ITEM 2/3: antes, quem ENVIOU o arquivo ganhava acesso total a ele
+  // automaticamente (mesma falha da pasta, acima) — removido pelo mesmo
+  // motivo. As permissões do documento agora seguem sempre as permissões
+  // globais do usuário e/ou as concedidas na pasta onde o arquivo está.
   if(!d.pastaId){
     return global.includes('visualizar') ? global : [];
   }
@@ -1431,10 +1478,32 @@ function openModal(html, extraClass){
   card.className = 'modal-card' + (extraClass ? ' ' + extraClass : '');
   $('#modalOverlay').classList.remove('hidden');
 }
+/* ITEM (visualizador de documento): calcula, em pixels, o espaço que sobra
+   dentro do modal depois de descontar cabeçalho/metadados/descrição/botões,
+   e aplica essa altura na área de pré-visualização — assim só ela rola,
+   sem disputa com a barra de rolagem do modal inteiro. */
+function ajustarAlturaDocViewer_(){
+  const card = document.querySelector('.modal-card.modal-doc-view');
+  const corpo = card && card.querySelector('.doc-viewer-corpo');
+  if(!card || !corpo) return;
+  const calc = () => {
+    const estilo = getComputedStyle(card);
+    const padV = parseFloat(estilo.paddingTop) + parseFloat(estilo.paddingBottom);
+    const outros = Array.from(card.children).reduce((soma, el) => el === corpo ? soma : soma + el.offsetHeight, 0);
+    const tetoCard = Math.min(window.innerHeight * 0.92, card.scrollHeight || Infinity);
+    const disponivel = tetoCard - padV - outros - 14;
+    corpo.style.height = Math.max(240, disponivel) + 'px';
+  };
+  calc();
+  if(state._ajustarViewerResize) window.removeEventListener('resize', state._ajustarViewerResize);
+  state._ajustarViewerResize = calc;
+  window.addEventListener('resize', calc);
+}
 function fecharModal(){
   $('#modalOverlay').classList.add('hidden');
   bloqueioAtivo = false; pdfPendente = null; officePendente = null; sheetState = null; camPages = [];
   if(currentBlobUrl){ const u = currentBlobUrl; currentBlobUrl = null; setTimeout(() => { try{URL.revokeObjectURL(u)}catch(e){} }, 1500); }
+  if(state._ajustarViewerResize){ window.removeEventListener('resize', state._ajustarViewerResize); state._ajustarViewerResize = null; }
 }
 let acaoPendente = null;
 function modalConfirm(titulo, msg, fn){
@@ -1652,12 +1721,15 @@ function renderAcoes_(itens, tipo, id){
 function itensPasta_(p, dono, perms){
   return [
     dono ? {ic:'fa-share-nodes', title:'Permissões da pasta', action:'compartilhar', id:p.id} : null,
-    (dono || perms.includes('excluir_pasta')) ? {ic:'fa-trash-can', title:'Excluir pasta', action:'excluir-pasta', id:p.id, danger:true} : null
+    // ITEM 2: excluir pasta não pode liberar automaticamente só por ser
+    // dono — precisa da permissão "excluir_pasta" mesmo (admin já a possui
+    // sempre, via permsAtuais/permsEff).
+    perms.includes('excluir_pasta') ? {ic:'fa-trash-can', title:'Excluir pasta', action:'excluir-pasta', id:p.id, danger:true} : null
   ];
 }
 function itensDoc_(d, pd){
   return [
-    {ic:'fa-eye', title:'Visualizar', action:'ver-doc', id:d.id},
+    pd.includes('visualizar') ? {ic:'fa-eye', title:'Visualizar', action:'ver-doc', id:d.id} : null,
     acaoBaixarDescr_(d, pd.includes('download')),
     d.erroUpload ? {ic:'fa-rotate-right', title:'Reenviar para o Drive (' + d.erroUpload + ')', action:'reenviar-doc', id:d.id} : null,
     pd.includes('editar') ? {ic:'fa-folder-tree', title:'Mover', action:'mover-doc', id:d.id} : null,
@@ -1675,6 +1747,10 @@ function itensVisiveis(){
     docs = docs.filter(d => permsDoc(d).includes('visualizar'));
   } else if(state.currentFolderId){
     folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
+    // ITEM 2/3: faltava esse mesmo filtro aqui — dentro de uma pasta, os
+    // ARQUIVOS apareciam pra todo mundo que tivesse acesso à pasta, mesmo
+    // sem permissão de Visualizar concedida a esse usuário especificamente.
+    if(!ehAdmin(u)) docs = docs.filter(d => permsDoc(d).includes('visualizar'));
   }
   docs = docs.filter(d => formatoVisivel(d, u));
   if(q){
@@ -1839,6 +1915,10 @@ function modalVer(docId){
   const autor = (getUsuarios().find(x => x.id === d.criadoPor) || {}).nome || '—';
   const pasta = pastaPorId(d.pastaId);
   const pd = permsDoc(d);
+  // ITEM 2/3: sem permissão de Visualizar para este documento específico,
+  // nem abre o visualizador — antes o botão "Visualizar/ler" não checava
+  // permissão nenhuma e qualquer usuário conseguia abrir qualquer arquivo.
+  if(!pd.includes('visualizar')){ toast('Você não tem permissão para visualizar este arquivo.','error'); return; }
   const podeBaixar = pd.includes('download');
   const podeImprimir = pd.includes('imprimir');
   const protegido = !(podeBaixar && podeImprimir);
@@ -1899,12 +1979,12 @@ function modalVer(docId){
     '<button class="btn-ic" data-action="fechar-modal" title="Fechar"><i class="fa-solid fa-xmark"></i></button></div>' +
     '<div class="doc-meta"><span><i class="fa-solid fa-user"></i>' + esc(autor) + '</span>' +
     '<span><i class="fa-solid fa-folder"></i>' + (pasta ? esc(pasta.nome) : 'Raiz') + '</span>' +
-    '<span><i class="fa-solid fa-shield-halved"></i>' + icoPerms(pd) + '</span>' +
     '<span><i class="fa-solid fa-clock"></i>' + fmtData(d.atualizadoEm || d.criadoEm) + '</span>' +
     (d.tamanho ? '<span><i class="fa-solid fa-database"></i>' + fmtTam(d.tamanho) + '</span>' : '') + '</div>' +
     (d.descricao ? '<p class="modal-sub" style="margin-top:-8px"><i class="fa-solid fa-align-left"></i> ' + esc(d.descricao) + '</p>' : '') +
     '<div class="doc-viewer-corpo">' + corpo + '</div>' +
     '<div class="modal-actions">' + acoes + '</div>', 'modal-doc-view');
+  ajustarAlturaDocViewer_();
 
   const cont0 = $('#officePrev');
   if(officePendente && cont0){
@@ -2078,12 +2158,8 @@ function renderPerfil(){
   $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Meu Perfil</h1>' +
   '<div class="grid-2">' +
     '<section class="card"><div class="perfil-top"><span class="avatar-lg">' + iniciais(u.nome) + '</span>' +
-      '<div><div class="perfil-nome">' + esc(u.nome) + '</div><small style="color:var(--muted)">' + esc(u.email) + '</small><br>' +
-      '<span class="tag tag-admin" style="margin-top:8px;display:inline-block">' + PAPEIS[u.papel] + '</span></div>' +
+      '<div><div class="perfil-nome">' + esc(u.nome) + '</div><small style="color:var(--muted)">' + esc(u.email) + '</small></div>' +
       '<button class="btn btn-light" style="margin-left:auto" data-action="editar-usuario" data-id="' + u.id + '"><i class="fa-solid fa-user-pen"></i> Editar meus dados</button></div>' +
-      '<div class="sobre-texto" style="padding-top:0"><i class="fa-solid fa-shield-halved" style="color:var(--primary)"></i> Minhas permissões globais: ' +
-      (ehAdmin(u) ? '<span class="tag tag-admin">Todas</span>' : icoPerms(u.perms || [])) +
-      '<br><small style="color:var(--muted)">Elas valem em todas as pastas da empresa. Pastas privadas de outros usuários só aparecem se forem compartilhadas com você.</small></div>' +
     '</section>' +
     '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-key"></i> Alterar senha</h2></div>' +
       '<div style="padding:18px 22px">' +
@@ -2148,20 +2224,23 @@ const SCRIPT_GAS =
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
 ' - doGet com suporte a JSONP (?callback=fn), inclusive para\n' +
 '   as acoes login/trocarSenha/atualizarPerfil/obterSalt/\n' +
-'   escanearPendentes (GET, nao POST - o Apps Script nao\n' +
-'   devolve cabecalho CORS em respostas de POST, entao um\n' +
-'   fetch comum lendo a resposta e bloqueado pelo navegador\n' +
-'   em varios casos; JSONP nunca sofre CORS). NUNCA devolve\n' +
-'   campos de senha (senha/senhaHash/senhaSalt).\n' +
+'   escanearPendentes/verificarOrfaos (GET, nao POST - o Apps\n' +
+'   Script nao devolve cabecalho CORS em respostas de POST,\n' +
+'   entao um fetch comum lendo a resposta e bloqueado pelo\n' +
+'   navegador em varios casos; JSONP nunca sofre CORS). NUNCA\n' +
+'   devolve campos de senha (senha/senhaHash/senhaSalt).\n' +
 ' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
 '   subpasta para cada pasta do app (espelhada).\n' +
-' - Autorizacao no servidor (admin/permissoes), dono de\n' +
-'   pasta pode excluir mesmo sem permissao explicita, e\n' +
-'   aba Excluidos com o historico de exclusoes.\n' +
+' - Autorizacao no servidor (admin/permissoes) - inclusive\n' +
+'   exclusao de pasta/arquivo, que agora exige a permissao\n' +
+'   real do usuario (dono nao ganha acesso automatico).\n' +
+' - Aba Excluidos com o historico de exclusoes.\n' +
 ' - Endpoint escanearPendentes: acha no Drive pastas e\n' +
 '   arquivos que ainda nao estao na planilha (uso admin).\n' +
-' - Endpoint limparExcluidos: apaga o historico da aba\n' +
-'   Excluidos (uso admin, via botao "Limpar excluidos").\n' +
+' - Endpoint verificarOrfaos: acha na planilha pastas e\n' +
+'   arquivos cujo id do Drive nao existe mais (excluido\n' +
+'   direto no Drive) ou esta na lixeira - uso admin, para\n' +
+'   sincronizar o app com o estado real do Drive.\n' +
 ' - Escritas em qualquer aba fazem merge por "id" com o\n' +
 '   que ja existe na planilha, em vez de sobrescrever a\n' +
 '   linha inteira - evita perder campos (ex.: driveId) que\n' +
@@ -2189,6 +2268,7 @@ const SCRIPT_GAS =
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n' +
+'\n' +
 'var VERSAO = 12;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
@@ -2451,6 +2531,38 @@ const SCRIPT_GAS =
 '  return {pastas: pastasNovas, arquivos: arquivosNovos};\n' +
 '}\n' +
 '\n' +
+'// ITEM 4 (sincronização com o Drive): o caminho inverso de escanearPendentes_ —\n' +
+'// acha, na planilha, pastas/arquivos cujo driveFolderId/driveId não existe\n' +
+'// mais no Drive (foi excluído por fora do app, direto no Drive) ou está na\n' +
+'// lixeira do Drive. Uso restrito a admin. Só avalia registros que já têm um\n' +
+'// id do Drive gravado — linhas ainda "Enviando para o Drive…" (sem\n' +
+'// driveId/driveFolderId) não são órfãs, só ainda não terminaram de subir.\n' +
+'function verificarOrfaos_(){\n' +
+'  var pastasOrfas = [];\n' +
+'  var docsOrfaos = [];\n' +
+'  lerFolha_("Pastas").forEach(function(item){\n' +
+'    var id = item.obj.driveFolderId;\n' +
+'    if (!id) return;\n' +
+'    try {\n' +
+'      var f = DriveApp.getFolderById(id);\n' +
+'      if (f.isTrashed()) throw new Error("trashed");\n' +
+'    } catch(e) {\n' +
+'      pastasOrfas.push({id:item.obj.id, nome:item.obj.nome});\n' +
+'    }\n' +
+'  });\n' +
+'  lerFolha_("Documentos").forEach(function(item){\n' +
+'    var id = item.obj.driveId;\n' +
+'    if (!id) return;\n' +
+'    try {\n' +
+'      var f = DriveApp.getFileById(id);\n' +
+'      if (f.isTrashed()) throw new Error("trashed");\n' +
+'    } catch(e) {\n' +
+'      docsOrfaos.push({id:item.obj.id, titulo:item.obj.titulo});\n' +
+'    }\n' +
+'  });\n' +
+'  return {pastas: pastasOrfas, arquivos: docsOrfaos};\n' +
+'}\n' +
+'\n' +
 '// ---------- doGet ----------\n' +
 '// ITEM 14: login, troca de senha, edição de perfil e a varredura de\n' +
 '// pendentes passaram a ser atendidos aqui (GET, com JSONP), em vez de POST.\n' +
@@ -2537,6 +2649,13 @@ const SCRIPT_GAS =
 '      return responder({ok:false, erro:"apenas administradores"});\n' +
 '    }\n' +
 '    return responder(Object.assign({ok:true}, escanearPendentes_()));\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "verificarOrfaos"){\n' +
+'    if (!ehAdmin_(buscarUsuario_(p.userId))){\n' +
+'      return responder({ok:false, erro:"apenas administradores"});\n' +
+'    }\n' +
+'    return responder(Object.assign({ok:true}, verificarOrfaos_()));\n' +
 '  }\n' +
 '\n' +
 '  var out = {};\n' +
@@ -2738,6 +2857,7 @@ function renderSobre(){
     '<div class="integ-row"><input id="urlGas" value="' + esc(url) + '">' +
     '<button class="btn btn-primary" data-action="salvar-url"><i class="fa-solid fa-floppy-disk"></i> Salvar URL</button>' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
+    '<button class="btn btn-light" data-action="sincronizar-drive"><i class="fa-solid fa-arrows-rotate"></i> Sincronizar com o Drive</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
   '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 12</h2></div>' +
@@ -2791,6 +2911,41 @@ document.addEventListener('click', e => {
       delete window.__pendentesDriveTmp;
       fecharModal();
       toast('Itens importados na Raiz. Você pode movê-los para as pastas corretas.');
+      renderDashboard();
+      break;
+    }
+    case 'sincronizar-drive': {
+      if(!ehAdmin(u)){ toast('Apenas administradores podem sincronizar com o Drive.','error'); break; }
+      sincronizarComDrive();
+      break;
+    }
+    case 'remover-orfaos-drive': {
+      const tmp = window.__orfaosDriveTmp || {pastas:[], arquivos:[]};
+      const idsPastas = tmp.pastas.map(p => p.id);
+      const idsDocs = tmp.arquivos.map(a => a.id);
+      // ITEM 4: ao remover uma pasta órfã, também removemos (localmente) suas
+      // subpastas e documentos, já que a pasta-mãe não existe mais no Drive.
+      if(idsPastas.length){
+        let todasPastas = new Set(idsPastas);
+        let mudou = true;
+        while(mudou){
+          mudou = false;
+          DB.get('Pastas').forEach(p => {
+            if(p.parentId && todasPastas.has(p.parentId) && !todasPastas.has(p.id)){ todasPastas.add(p.id); mudou = true; }
+          });
+        }
+        const docsDentro = DB.get('Documentos').filter(d => d.pastaId && todasPastas.has(d.pastaId)).map(d => d.id);
+        marcarExcluido_('Pastas', Array.from(todasPastas));
+        marcarExcluido_('Documentos', docsDentro.concat(idsDocs));
+        DB.set('Pastas', DB.get('Pastas').filter(p => !todasPastas.has(p.id)));
+        DB.set('Documentos', DB.get('Documentos').filter(d => !(d.pastaId && todasPastas.has(d.pastaId)) && !idsDocs.includes(d.id)));
+      } else if(idsDocs.length){
+        marcarExcluido_('Documentos', idsDocs);
+        DB.set('Documentos', DB.get('Documentos').filter(d => !idsDocs.includes(d.id)));
+      }
+      delete window.__orfaosDriveTmp;
+      fecharModal();
+      toast('Itens removidos do app — sincronizado com o Drive.');
       renderDashboard();
       break;
     }
@@ -3159,8 +3314,10 @@ document.addEventListener('click', e => {
     case 'excluir-pasta': {
       const p = pastaPorId(id);
       const perms = permsAtuais();
-      const dono = p && (p.criadaPor === u.id || ehAdmin(u));
-      if(!dono && !perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
+      // ITEM 2: antes, o dono da pasta podia excluí-la mesmo sem a
+      // permissão "excluir_pasta" — removido; agora exige a permissão
+      // real (admin sempre a tem, via permsAtuais).
+      if(!perms.includes('excluir_pasta')){ toast('Sem permissão para excluir pasta.','error'); break; }
       modalConfirm('Excluir pasta', 'Excluir definitivamente a pasta <b>' + esc(p ? p.nome : '') + '</b> com todas as subpastas e arquivos, inclusive no Google Drive?', () => {
         if(p && p.driveFolderId) Sync.excluirDrive('pasta', p.driveFolderId, p.nome, p.criadaPor);
         excluirPastaRec(id);
