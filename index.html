@@ -94,6 +94,10 @@ button{font-family:inherit}
 .breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 22px 14px;font-size:13px}
 .breadcrumb-row{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:0 22px 14px}
 .breadcrumb-row .breadcrumb{padding:0}
+.sel-row-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;flex-wrap:wrap}
+.sel-row-btns{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.contagem-arquivos{color:var(--muted,#667085);font-size:13px;font-weight:600;white-space:nowrap}
+.contagem-arquivos i{margin-right:6px}
 .crumb{border:none;background:none;color:var(--primary);font-weight:600;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:6px}
 .crumb:hover{background:#eaf2ff}
 .crumb.active{color:var(--muted);cursor:default;background:none}
@@ -1508,6 +1512,7 @@ function renderDashboard(){
   if(state.currentFolderId && (!atual || !permsEff(u.id, atual).includes('visualizar'))) state.currentFolderId = null;
   const perms = permsAtuais();
   const vm = VIEW_MODES.find(v => v.m === state.viewMode) || VIEW_MODES[5];
+  const totalArquivos = itensVisiveis().docs.length;
   $('#viewRoot').innerHTML =
   '<div class="view">' +
     '<h1 class="page-title">Dashboard</h1>' +
@@ -1534,8 +1539,13 @@ function renderDashboard(){
       '<input type="file" id="fileInput" accept="' + esc(acceptString()) + '" multiple class="hidden">' +
       '<div class="breadcrumb-row">' +
         '<div class="breadcrumb" id="breadcrumb"></div>' +
-        '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
-        (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Selecionar todos</button>' : '') +
+        '<div class="sel-row-actions">' +
+          '<div class="sel-row-btns">' +
+            '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
+            (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Selecionar todos</button>' : '') +
+          '</div>' +
+          '<span class="contagem-arquivos"><i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
+        '</div>' +
       '</div>' +
       '<div id="itens"></div>' +
     '</section>' +
