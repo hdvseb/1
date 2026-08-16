@@ -1541,8 +1541,8 @@ function renderDashboard(){
         '<div class="breadcrumb" id="breadcrumb"></div>' +
         '<div class="sel-row-actions">' +
           '<div class="sel-row-btns">' +
-            '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Cancelar seleção' : 'Selecionar') + '</button>' +
-            (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Selecionar todos</button>' : '') +
+            '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Desmarcar' : 'Selecionar') + '</button>' +
+            (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Marcar todos</button>' : '') +
           '</div>' +
           '<span class="contagem-arquivos"><i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
         '</div>' +
