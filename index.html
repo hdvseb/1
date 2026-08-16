@@ -389,7 +389,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 11;
+const APP_VERSAO = 12;
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbxfS90iRSmR03bTVPYHJX_LtnHVLGJwwft7eGnW7K3X88UzqXHtdcrJBWLxkGuLIgx4RA/exec';
 const SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
 // REMOÇÃO (item 10): a busca automática de GAS_URL na aba "Settings" via
@@ -585,6 +585,31 @@ function pullViaJSONP(url){
     document.head.appendChild(s);
   });
 }
+/* ITEM 14: chamador genérico para ações que precisam de resposta (login,
+   troca de senha, perfil, escanear pendentes). Usa o mesmo mecanismo JSONP
+   do pull — carrega como uma tag <script>, nunca sofre bloqueio de CORS.
+   Um fetch comum lendo a resposta de um POST ao Apps Script FALHA por CORS
+   em vários navegadores (o Apps Script não devolve o cabeçalho necessário
+   nessas respostas) — funcionava por acidente em alguns casos, mas não em
+   outros, como o Brave. GET+JSONP é o mesmo caminho, já confiável, que a
+   sincronização de dados sempre usou. */
+function chamarAcaoGet_(params){
+  const url = Sync.url(); if(!url) return Promise.reject(new Error('sem url'));
+  const qs = Object.keys(params).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k] == null ? '' : params[k])).join('&');
+  return pullViaJSONP(url + (url.includes('?') ? '&' : '?') + qs);
+}
+/* Hash de senha calculado no NAVEGADOR (Web Crypto, SHA-256) — a senha em
+   texto puro nunca sai do dispositivo do usuário, nem pela URL nem pelo
+   corpo de uma requisição. O servidor só recebe e compara hashes. */
+async function sha256Hex_(texto){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+function gerarSaltCliente_(){
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+}
 let backendAntigo = false;
 /* CORREÇÃO (item 8): antes, cada Sync.push disparava um fetch imediatamente,
    sem esperar o anterior da mesma aba terminar. Se duas chamadas saíssem
@@ -630,16 +655,17 @@ const Sync = {
     if(f === 'Documentos') agendarPull();
   },
   pushAll(){ FOLHAS.forEach(f => this.push(f, DB.get(f))); },
-  /* ITEM 13: envia o conteúdo do arquivo direto pro Drive — não passa mais
-     pela planilha. Usa fetch legível (não "no-cors") porque precisamos
-     mesmo saber se deu certo, com o driveId/driveUrl de volta, ou o motivo
-     exato da falha (ex.: erro de permissão do Drive), pra mostrar pro
-     usuário em vez de falhar silenciosamente como antes. */
+  /* ITEM 13/14: envia o arquivo direto pro Drive — "no-cors" (o navegador
+     manda mas não tenta ler a resposta, já que o Apps Script não devolve
+     cabeçalho CORS em respostas de POST). O resultado (driveId ou
+     erroUpload, gravados pelo servidor na linha do documento) chega pro
+     navegador no próximo "pull" — mesmo caminho, comprovadamente
+     confiável, que o resto do app já usa. */
   uploadArquivo(payload){
-    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
-    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(corpoComUsuario_(Object.assign({acao:'uploadArquivo'}, payload)))})
-      .then(r => r.json());
+    const url = this.url(); if(!url) return;
+    fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(corpoComUsuario_(Object.assign({acao:'uploadArquivo'}, payload)))}).catch(()=>{});
+    agendarPull();
   },
   ensureDriveRoot(){
     const url = this.url(); if(!url) return;
@@ -662,37 +688,42 @@ const Sync = {
     fetch(url, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify(corpoComUsuario_({acao:'limparExcluidos'}))}).catch(()=>{});
   },
-  /* ITEM 7: pede ao backend a lista de pastas/arquivos que existem no Drive
-     mas ainda não estão cadastrados na planilha. Só o backend confirma que
-     quem pediu é admin, mas só chamamos isso para admin no front também. */
+  /* ITEM 7/14: pede ao backend a lista de pastas/arquivos que existem no
+     Drive mas ainda não estão cadastrados na planilha. GET+JSONP (não sofre
+     CORS) — o servidor confirma que quem pediu é admin. */
   escanearPendentes(){
-    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
-    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(corpoComUsuario_({acao:'escanearPendentes'}))})
-      .then(r => r.json());
+    const u = currentUser();
+    return chamarAcaoGet_({acao:'escanearPendentes', userId: u ? u.id : ''});
   },
-  /* ITEM 11: login e troca de senha verificados no servidor — a senha nunca
-     mais é comparada localmente (o doGet nem devolve mais esse campo). */
-  login(email, senha){
-    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
-    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({acao:'login', email, senha})})
-      .then(r => r.json());
+  /* ITEM 11/14: login verificado no servidor, via GET+JSONP. A senha nunca
+     sai do navegador em texto puro: primeiro buscamos o salt do e-mail
+     informado, calculamos o hash aqui (Web Crypto), e só então mandamos o
+     hash — nunca a senha em si. */
+  async login(email, senha){
+    const saltRes = await chamarAcaoGet_({acao:'obterSalt', email});
+    if(!saltRes || !saltRes.ok || !saltRes.salt) return {ok:false, erro:'E-mail ou senha inválidos.'};
+    const hash = await sha256Hex_(senha + '::' + saltRes.salt);
+    return chamarAcaoGet_({acao:'login', email, senhaHash: hash});
   },
-  trocarSenha(userId, senhaAtual, senhaNova){
-    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
-    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(corpoComUsuario_({acao:'trocarSenha', userId, senhaAtual, senhaNova}))})
-      .then(r => r.json());
+  async trocarSenha(userId, senhaAtual, senhaNova){
+    const saltRes = await chamarAcaoGet_({acao:'obterSalt', userId});
+    if(!saltRes || !saltRes.ok || !saltRes.salt) return {ok:false, erro:'Não foi possível verificar a senha atual.'};
+    const hashAtual = await sha256Hex_(senhaAtual + '::' + saltRes.salt);
+    const novoSalt = gerarSaltCliente_();
+    const novaHash = await sha256Hex_(senhaNova + '::' + novoSalt);
+    return chamarAcaoGet_({acao:'trocarSenha', userId, senhaAtualHash: hashAtual, novoSalt, novaSenhaHash: novaHash});
   },
-  /* ITEM 12: edição do PRÓPRIO perfil (nome/e-mail/senha) — funciona pra
+  /* ITEM 12/14: edição do PRÓPRIO perfil (nome/e-mail/senha) — funciona pra
      qualquer usuário, não só admin, sem precisar reabrir a gravação da
      aba "Usuarios" inteira pra não-admins. */
-  atualizarPerfil(userId, nome, email, senha){
-    const url = this.url(); if(!url) return Promise.reject(new Error('sem url'));
-    return fetch(url, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(corpoComUsuario_({acao:'atualizarPerfil', userId, nome, email, senha}))})
-      .then(r => r.json());
+  async atualizarPerfil(userId, nome, email, senha){
+    const params = {acao:'atualizarPerfil', userId, nome, email};
+    if(senha){
+      const novoSalt = gerarSaltCliente_();
+      params.novoSalt = novoSalt;
+      params.novaSenhaHash = await sha256Hex_(senha + '::' + novoSalt);
+    }
+    return chamarAcaoGet_(params);
   },
   async pull(){
     const url = this.url(); if(!url) throw new Error('sem url');
@@ -858,12 +889,9 @@ function obterBuffer(d){
 function salvarArquivoBin(d, dataUrl, titulo){
   const docs = DB.get('Documentos');
   const tamanho = Math.round(dataUrl.length * 0.75);
-  if(!Sync.url()){
-    DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now()}) : x));
-    return true;
-  }
-  DB.set('Documentos', docs.map(x => x.id === d.id ? Object.assign({}, x, {titulo: titulo || x.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now(), enviandoDrive:true}) : x));
-  enviarArquivoAoDrive_(d.id, d.pastaId, titulo || d.titulo, d.ext, d.mime, dataUrl);
+  const atualizado = Object.assign({}, d, {titulo: titulo || d.titulo, arquivo: dataUrl, tamanho: tamanho, atualizadoEm: Date.now(), erroUpload: ''});
+  DB.set('Documentos', docs.map(x => x.id === d.id ? atualizado : x));
+  if(Sync.url()) enviarArquivoAoDrive_(atualizado);
   return true;
 }
 function fileToJpegDataUrl(file, maxDim, quality){
@@ -1102,39 +1130,46 @@ function renderCamPages(){
     ? camPages.map((p, i) => '<div class="cam-item"><img src="' + p + '" alt="Página ' + (i+1) + '"><button class="btn-ic danger" data-action="cam-remove" data-idx="' + i + '" title="Remover página"><i class="fa-solid fa-xmark"></i></button></div>').join('')
     : '<p class="modal-sub" style="margin:6px 0">Nenhuma página capturada ainda.</p>';
 }
-/* ITEM 13: envia o conteúdo do arquivo pro Drive pelo endpoint dedicado,
-   fora da planilha. Atualiza o documento local com driveId/driveUrl quando
-   terminar, ou marca o erro (mostrado pro usuário) se falhar. */
-function enviarArquivoAoDrive_(docId, pastaId, titulo, ext, mime, dataUrl){
+/* ITEM 13/14: envia o conteúdo do arquivo pro Drive pelo endpoint dedicado,
+   fora da planilha (fire-and-forget — o resultado chega no próximo pull,
+   que atualiza driveId/erroUpload e reflete na tela via renderItens). */
+function enviarArquivoAoDrive_(doc){
   const u = currentUser();
-  Sync.uploadArquivo({userId: u ? u.id : '', pastaId, titulo, ext, mime, arquivo: dataUrl}).then(res => {
-    const docs = DB.get('Documentos');
-    if(res && res.ok){
-      DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {arquivo:'', driveId: res.driveId, driveUrl: res.driveUrl, enviandoDrive:false, erroUpload:''}) : x));
-    } else {
-      DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {enviandoDrive:false, erroUpload: (res && res.erro) || 'Falha ao enviar para o Drive.'}) : x));
-      toast('Falha ao enviar "' + titulo + '" para o Drive: ' + ((res && res.erro) || 'erro desconhecido'), 'error');
-    }
-    renderItens();
-  }).catch(() => {
-    const docs = DB.get('Documentos');
-    DB.set('Documentos', docs.map(x => x.id === docId ? Object.assign({}, x, {enviandoDrive:false, erroUpload:'Não foi possível conectar ao servidor.'}) : x));
-    toast('Não foi possível conectar ao servidor para enviar "' + titulo + '".','error');
-    renderItens();
+  Sync.uploadArquivo({
+    userId: u ? u.id : '',
+    docId: doc.id,
+    pastaId: doc.pastaId,
+    titulo: doc.titulo,
+    ext: doc.ext,
+    mime: doc.mime,
+    criadoEm: doc.criadoEm,
+    arquivo: doc.arquivo
   });
+}
+/* ITEM 15: reenvia um documento que ficou com "erroUpload" — usa a mesma
+   cópia local do arquivo que já está guardada no navegador (por isso ela
+   não é apagada quando o envio falha). Se essa cópia não existir mais
+   (ex.: outro navegador, ou já foi limpa), avisa que é preciso excluir e
+   subir de novo. */
+function reenviarUpload(docId){
+  const d = DB.get('Documentos').find(x => x.id === docId);
+  if(!d){ return; }
+  if(!d.arquivo){
+    toast('O conteúdo original não está mais disponível neste navegador. Exclua este item e envie o arquivo de novo.', 'error');
+    return;
+  }
+  DB.set('Documentos', DB.get('Documentos').map(x => x.id === docId ? Object.assign({}, x, {erroUpload:''}) : x));
+  enviarArquivoAoDrive_(d);
+  toast('Reenviando "' + d.titulo + '" para o Drive…');
+  renderItens();
 }
 function salvarDocArquivo(base, dataUrl){
   const tamanho = Math.round(dataUrl.length * 0.75);
   const docs = DB.get('Documentos');
-  if(!Sync.url()){
-    // Modo local (sem integração Google configurada) — fica só no navegador.
-    docs.push(Object.assign({}, base, {arquivo: dataUrl, tamanho}));
-    DB.set('Documentos', docs);
-    return true;
-  }
-  docs.push(Object.assign({}, base, {arquivo: dataUrl, tamanho, enviandoDrive:true}));
+  const doc = Object.assign({}, base, {arquivo: dataUrl, tamanho});
+  docs.push(doc);
   DB.set('Documentos', docs);
-  enviarArquivoAoDrive_(base.id, base.pastaId, base.titulo, base.ext, base.mime, dataUrl);
+  if(Sync.url()) enviarArquivoAoDrive_(doc);
   return true;
 }
 
@@ -1567,6 +1602,7 @@ function renderItens(){
     const acoesDoc = (d, pd) =>
       '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
       btnBaixar(d, pd.includes('download')) +
+      (d.erroUpload ? '<button class="btn-ic" title="Reenviar para o Drive (' + esc(d.erroUpload) + ')" data-action="reenviar-doc" data-id="' + d.id + '"><i class="fa-solid fa-rotate-right"></i></button>' : '') +
       (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
       (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
       (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
@@ -1632,9 +1668,9 @@ function renderItens(){
         const ci = catInfo(d);
         const pd = permsDoc(d);
         const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
-        const statusDrive = d.enviandoDrive ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…'
-          : d.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(d.erroUpload) + '"></i> Falha no envio'
-          : (d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive' : '');
+        const statusDrive = d.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(d.erroUpload) + '"></i> Falha no envio'
+          : d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive'
+          : Sync.url() ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…' : '';
         return '<div class="item-row' + selCls('doc', d.id) + '">' +
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
@@ -2017,9 +2053,14 @@ function renderExcluidos(){
 /* ===== BACKEND APPS SCRIPT (VERSAO 7 - JSONP) ===== */
 const SCRIPT_GAS =
 '=====================================================\n' +
-' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 11)\n' +
+' GOOGLE APPS SCRIPT - Code.gs  (VERSAO 12)\n' +
 ' Backend: Google Sheets (dados) + Google Drive (pastas e arquivos)\n' +
-' - doGet com suporte a JSONP (?callback=fn). NUNCA devolve\n' +
+' - doGet com suporte a JSONP (?callback=fn), inclusive para\n' +
+'   as acoes login/trocarSenha/atualizarPerfil/obterSalt/\n' +
+'   escanearPendentes (GET, nao POST - o Apps Script nao\n' +
+'   devolve cabecalho CORS em respostas de POST, entao um\n' +
+'   fetch comum lendo a resposta e bloqueado pelo navegador\n' +
+'   em varios casos; JSONP nunca sofre CORS). NUNCA devolve\n' +
 '   campos de senha (senha/senhaHash/senhaSalt).\n' +
 ' - Verifica/cria a pasta principal SGD_Arquivos e uma\n' +
 '   subpasta para cada pasta do app (espelhada).\n' +
@@ -2035,9 +2076,9 @@ const SCRIPT_GAS =
 '   linha inteira - evita perder campos (ex.: driveId) que\n' +
 '   um push mais recente ja tinha gravado.\n' +
 ' - Senha nunca fica em texto puro: so senhaHash+senhaSalt\n' +
-'   (SHA-256) sao gravados. Login (acao "login") e troca de\n' +
-'   senha (acao "trocarSenha") sao verificados aqui, no\n' +
-'   servidor.\n' +
+'   (SHA-256) sao gravados, e o HASH e calculado no proprio\n' +
+'   navegador antes de sair (Web Crypto) - a senha em texto\n' +
+'   puro nunca trafega, nem por POST nem por GET.\n' +
 ' - Endpoint atualizarPerfil: qualquer usuario (admin ou\n' +
 '   nao) pode editar o proprio nome/e-mail/senha, sem\n' +
 '   precisar de acesso de admin - so mexe na propria linha\n' +
@@ -2045,17 +2086,19 @@ const SCRIPT_GAS =
 ' - migrarSenhasParaHash_UMA_VEZ(): rodar manualmente uma\n' +
 '   vez no editor do Apps Script para converter senhas de\n' +
 '   usuarios antigos (texto puro) para hash+salt.\n' +
-' - Endpoint uploadArquivo: grava o arquivo direto no Drive\n' +
-'   (fora da planilha). Uma celula do Sheets tem limite de\n' +
-'   ~50.000 caracteres - mandar o arquivo em base64 dentro\n' +
-'   da linha de "Documentos" (como antes) estourava esse\n' +
-'   limite e derrubava a gravacao inteira com excecao, para\n' +
-'   qualquer arquivo acima de ~35 KB. Agora so o driveId e o\n' +
-'   driveUrl (curtos) chegam a planilha.\n' +
+' - Endpoint uploadArquivo (POST, no-cors): grava o arquivo\n' +
+'   direto no Drive, fora da planilha (uma celula do Sheets\n' +
+'   tem limite de ~50.000 caracteres - o arquivo em base64\n' +
+'   dentro da linha de "Documentos" estourava esse limite e\n' +
+'   derrubava a gravacao inteira com excecao). A parte lenta\n' +
+'   (decodificar + gravar no Drive) roda FORA de qualquer\n' +
+'   bloqueio, para uploads em lote nao brigarem pelo mesmo\n' +
+'   lock; so a atualizacao final da linha na planilha usa um\n' +
+'   bloqueio curto.\n' +
 ' IMPORTANTE: apos colar este codigo, publique uma\n' +
 ' NOVA VERSAO da implantacao (Gerenciar implantacoes).\n' +
 '=====================================================\n' +
-'var VERSAO = 11;\n' +
+'var VERSAO = 12;\n' +
 'var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];\n' +
 '\n' +
 'function folha_(nome){\n' +
@@ -2110,6 +2153,21 @@ const SCRIPT_GAS =
 '  for (var i=0;i<rows.length;i++){ if (rows[i].obj.id === userId) return rows[i].obj; }\n' +
 '  return null;\n' +
 '}\n' +
+'function buscarUsuarioPorEmail_(email){\n' +
+'  var alvo = String(email || "").trim().toLowerCase();\n' +
+'  if (!alvo) return null;\n' +
+'  var rows = lerFolha_("Usuarios");\n' +
+'  for (var i=0;i<rows.length;i++){\n' +
+'    if (String(rows[i].obj.email || "").trim().toLowerCase() === alvo) return rows[i].obj;\n' +
+'  }\n' +
+'  return null;\n' +
+'}\n' +
+'function acharLinhaUsuario_(userId){\n' +
+'  if (!userId) return null;\n' +
+'  var rows = lerFolha_("Usuarios");\n' +
+'  for (var i=0;i<rows.length;i++){ if (rows[i].obj.id === userId) return rows[i]; }\n' +
+'  return null;\n' +
+'}\n' +
 'function ehAdmin_(u){ return !!u && (u.papel === "master" || u.papel === "admin"); }\n' +
 'function usuarioTemPermissao_(u, chave){\n' +
 '  if (!u) return false;\n' +
@@ -2118,14 +2176,12 @@ const SCRIPT_GAS =
 '  return perms.indexOf(chave) !== -1;\n' +
 '}\n' +
 '\n' +
-'// ---------- SENHA: hash + salt no servidor (item 11) ----------\n' +
-'// Antes, a senha ficava em texto puro na aba "Usuarios", e o doGet devolvia\n' +
-'// essa aba inteira sem checagem nenhuma — qualquer pessoa com a URL /exec\n' +
-'// conseguia ler a senha de todos os usuários, mesmo sem estar logada. Agora:\n' +
-'// 1) nunca guardamos "senha" em texto puro — só "senhaHash"+"senhaSalt";\n' +
-'// 2) o doGet nunca devolve senha/senhaHash/senhaSalt pra ninguém;\n' +
-'// 3) o login é verificado aqui no servidor (acao "login"), comparando o\n' +
-'//    hash, e só devolve o usuário (sem nenhum campo de senha) se bater.\n' +
+'// ---------- SENHA: hash + salt, nunca em texto puro ----------\n' +
+'// O doGet nunca devolve senha/senhaHash/senhaSalt pra ninguém. A partir da\n' +
+'// v12, o HASH é calculado no próprio navegador (Web Crypto, SHA-256) antes\n' +
+'// de sair — o servidor só compara hashes, nunca recebe a senha em texto\n' +
+'// puro em lugar nenhum (nem via POST). gerarSalt_/hashSenha_ ainda existem\n' +
+'// para uso interno (criação de usuário e migração de contas antigas).\n' +
 'function gerarSalt_(){\n' +
 '  return Utilities.getUuid();\n' +
 '}\n' +
@@ -2147,11 +2203,10 @@ const SCRIPT_GAS =
 '  return copia;\n' +
 '}\n' +
 '// Transforma cada linha recebida para a aba "Usuarios": se vier uma "senha"\n' +
-'// em texto puro (criação de usuário, ou admin/próprio usuário definindo uma\n' +
-'// nova senha), calculamos hash+salt aqui e NUNCA deixamos "senha" chegar a\n' +
-'// ser gravada na planilha. Se a linha não trouxer "senha" (edição de nome/\n' +
-'// e-mail sem trocar senha), simplesmente não mexemos nela — o merge por id\n' +
-'// que já existe preserva o hash/salt já salvos.\n' +
+'// em texto puro (criação de usuário por um admin, pela tela de gerenciar\n' +
+'// usuários), calculamos hash+salt aqui e NUNCA deixamos "senha" chegar a\n' +
+'// ser gravada na planilha. Se a linha não trouxer "senha", não mexemos —\n' +
+'// o merge por id preserva o hash/salt já salvos.\n' +
 'function prepararLinhasUsuarios_(rows){\n' +
 '  return (rows || []).map(function(r){\n' +
 '    if (!r || typeof r !== "object") return r;\n' +
@@ -2233,6 +2288,10 @@ const SCRIPT_GAS =
 '// — o servidor tentava criar o arquivo de novo. Agora só limpamos "arquivo"\n' +
 '// quando a gravação no Drive teve sucesso, e sinalizamos erro explícito\n' +
 '// quando falha, mantendo o conteúdo para tentar de novo.\n' +
+'// OBS (item 13): esta função só é usada hoje pelo caminho de fallback (uma\n' +
+'// linha de "Documentos" que ainda tenha "arquivo" preenchido, cenário raro\n' +
+'// de dados antigos) — o caminho normal de upload não passa mais por aqui,\n' +
+'// ver "uploadArquivo" no doPost.\n' +
 'function processarDoc_(r, cache){\n' +
 '  var out = JSON.parse(JSON.stringify(r));\n' +
 '  var mudou = false;\n' +
@@ -2268,28 +2327,9 @@ const SCRIPT_GAS =
 '  return mudou ? out : r;\n' +
 '}\n' +
 '\n' +
-'function doGet(e){\n' +
-'  var out = {};\n' +
-'  out.__v = VERSAO;\n' +
-'  FOLHAS.forEach(function(f){\n' +
-'    var rows = lerFolha_(f).map(function(r){ return r.obj; });\n' +
-'    if (f === "Usuarios") rows = rows.map(semCamposSenha_);\n' +
-'    out[f] = rows;\n' +
-'  });\n' +
-'  var json = JSON.stringify(out);\n' +
-'  var cb = e && e.parameter && e.parameter.callback;\n' +
-'  if (cb){\n' +
-'    return ContentService.createTextOutput(cb + "(" + json + ")")\n' +
-'      .setMimeType(ContentService.MimeType.JAVASCRIPT);\n' +
-'  }\n' +
-'  return ContentService.createTextOutput(json)\n' +
-'    .setMimeType(ContentService.MimeType.JSON);\n' +
-'}\n' +
-'\n' +
 '// ITEM 7: varre recursivamente a pasta raiz do Drive e devolve arquivos/subpastas\n' +
 '// que ainda não estão cadastrados na planilha (comparando pelos IDs já salvos\n' +
-'// em "Pastas".driveFolderId e "Documentos".driveId). Uso restrito a admin — a\n' +
-'// checagem de papel é feita no doPost, aqui só devolvemos os dados.\n' +
+'// em "Pastas".driveFolderId e "Documentos".driveId). Uso restrito a admin.\n' +
 'function escanearPendentes_(){\n' +
 '  var pastasReg = lerFolha_("Pastas").map(function(r){ return r.obj.driveFolderId; }).filter(Boolean);\n' +
 '  var docsReg = lerFolha_("Documentos").map(function(r){ return r.obj.driveId; }).filter(Boolean);\n' +
@@ -2320,203 +2360,231 @@ const SCRIPT_GAS =
 '  return {pastas: pastasNovas, arquivos: arquivosNovos};\n' +
 '}\n' +
 '\n' +
+'// ---------- doGet ----------\n' +
+'// ITEM 14: login, troca de senha, edição de perfil e a varredura de\n' +
+'// pendentes passaram a ser atendidos aqui (GET, com JSONP), em vez de POST.\n' +
+'// O Apps Script não devolve cabeçalho CORS nas respostas de POST, então o\n' +
+'// navegador bloqueia a leitura de uma resposta de POST feita de outro\n' +
+'// domínio — funcionava por acidente em alguns navegadores/sessões, mas\n' +
+'// falhava (silenciosamente, ou com erro de CORS visível) em outros, como o\n' +
+'// Brave. JSONP contorna isso por completo (carrega como uma tag <script>,\n' +
+'// nunca passa pelas regras de CORS do fetch), e é o mesmo mecanismo que já\n' +
+'// usávamos com sucesso pra sincronizar os dados (doGet "puro" já funcionava\n' +
+'// assim). A senha nunca trafega em texto puro: o navegador calcula o hash\n' +
+'// (SHA-256 com o salt do usuário) antes de mandar qualquer coisa.\n' +
+'function doGet(e){\n' +
+'  var p = (e && e.parameter) || {};\n' +
+'  var cb = p.callback;\n' +
+'  function responder(obj){\n' +
+'    var json = JSON.stringify(obj);\n' +
+'    if (cb) return ContentService.createTextOutput(cb + "(" + json + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);\n' +
+'    return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "obterSalt"){\n' +
+'    var uSalt = p.email ? buscarUsuarioPorEmail_(p.email) : buscarUsuario_(p.userId);\n' +
+'    if (!uSalt || !uSalt.senhaSalt) return responder({ok:false});\n' +
+'    return responder({ok:true, salt: uSalt.senhaSalt});\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "login"){\n' +
+'    var uLogin = buscarUsuarioPorEmail_(p.email);\n' +
+'    if (!uLogin || !uLogin.senhaHash || uLogin.senhaHash !== String(p.senhaHash || "")){\n' +
+'      return responder({ok:false, erro:"E-mail ou senha inválidos."});\n' +
+'    }\n' +
+'    return responder({ok:true, usuario: semCamposSenha_(uLogin)});\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "trocarSenha"){\n' +
+'    var uTroca = buscarUsuario_(p.userId);\n' +
+'    var linhaTroca = acharLinhaUsuario_(p.userId);\n' +
+'    if (!uTroca || !linhaTroca || !uTroca.senhaHash || uTroca.senhaHash !== String(p.senhaAtualHash || "")){\n' +
+'      return responder({ok:false, erro:"Senha atual incorreta."});\n' +
+'    }\n' +
+'    var novoSaltT = String(p.novoSalt || "");\n' +
+'    var novaHashT = String(p.novaSenhaHash || "");\n' +
+'    if (!novoSaltT || !novaHashT){\n' +
+'      return responder({ok:false, erro:"Dados inválidos."});\n' +
+'    }\n' +
+'    linhaTroca.obj.senhaSalt = novoSaltT;\n' +
+'    linhaTroca.obj.senhaHash = novaHashT;\n' +
+'    delete linhaTroca.obj.senha;\n' +
+'    gravarLinha_("Usuarios", linhaTroca.row, linhaTroca.obj);\n' +
+'    return responder({ok:true});\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "atualizarPerfil"){\n' +
+'    var quemEditaG = buscarUsuario_(p.userId);\n' +
+'    var linhaPerfilG = acharLinhaUsuario_(p.userId);\n' +
+'    if (!quemEditaG || !linhaPerfilG){\n' +
+'      return responder({ok:false, erro:"usuário não encontrado"});\n' +
+'    }\n' +
+'    var novoNomeG = String(p.nome || "").trim();\n' +
+'    var novoEmailG = String(p.email || "").trim().toLowerCase();\n' +
+'    if (!novoNomeG || novoEmailG.indexOf("@") === -1){\n' +
+'      return responder({ok:false, erro:"nome/e-mail inválidos"});\n' +
+'    }\n' +
+'    var linhasPerfilG = lerFolha_("Usuarios");\n' +
+'    for (var ig=0; ig<linhasPerfilG.length; ig++){\n' +
+'      if (linhasPerfilG[ig].obj.id !== p.userId && String(linhasPerfilG[ig].obj.email || "").trim().toLowerCase() === novoEmailG){\n' +
+'        return responder({ok:false, erro:"este e-mail já está cadastrado"});\n' +
+'      }\n' +
+'    }\n' +
+'    linhaPerfilG.obj.nome = novoNomeG;\n' +
+'    linhaPerfilG.obj.email = novoEmailG;\n' +
+'    if (p.novoSalt && p.novaSenhaHash){\n' +
+'      linhaPerfilG.obj.senhaSalt = String(p.novoSalt);\n' +
+'      linhaPerfilG.obj.senhaHash = String(p.novaSenhaHash);\n' +
+'    }\n' +
+'    delete linhaPerfilG.obj.senha;\n' +
+'    gravarLinha_("Usuarios", linhaPerfilG.row, linhaPerfilG.obj);\n' +
+'    return responder({ok:true, usuario: semCamposSenha_(linhaPerfilG.obj)});\n' +
+'  }\n' +
+'\n' +
+'  if (p.acao === "escanearPendentes"){\n' +
+'    if (!ehAdmin_(buscarUsuario_(p.userId))){\n' +
+'      return responder({ok:false, erro:"apenas administradores"});\n' +
+'    }\n' +
+'    return responder(Object.assign({ok:true}, escanearPendentes_()));\n' +
+'  }\n' +
+'\n' +
+'  var out = {};\n' +
+'  out.__v = VERSAO;\n' +
+'  FOLHAS.forEach(function(f){\n' +
+'    var rows = lerFolha_(f).map(function(r){ return r.obj; });\n' +
+'    if (f === "Usuarios") rows = rows.map(semCamposSenha_);\n' +
+'    out[f] = rows;\n' +
+'  });\n' +
+'  return responder(out);\n' +
+'}\n' +
+'\n' +
 'function doPost(e){\n' +
-'  var lock = LockService.getScriptLock();\n' +
-'  lock.waitLock(30000);\n' +
-'  try {\n' +
-'    var body = JSON.parse(e.postData.contents);\n' +
-'    var solicitante = buscarUsuario_(body.userId);\n' +
-'    var nomeSolicitante = solicitante ? solicitante.nome : (body.userNome || "desconhecido");\n' +
+'  var body = JSON.parse(e.postData.contents);\n' +
+'  var solicitante = buscarUsuario_(body.userId);\n' +
+'  var nomeSolicitante = solicitante ? solicitante.nome : (body.userNome || "desconhecido");\n' +
 '\n' +
-'    if (body.acao === "ensureRoot"){\n' +
-'      pastaDriveRaiz_();\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
+'  if (body.acao === "ensureRoot"){\n' +
+'    pastaDriveRaiz_();\n' +
+'    return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
 '\n' +
-'    // ITEM 11: login verificado no servidor. O cliente manda e-mail/senha em\n' +
-'    // texto puro (protegido pelo HTTPS da própria URL /exec, igual qualquer\n' +
-'    // formulário de login normal), calculamos o hash aqui com o salt salvo\n' +
-'    // e comparamos — a senha nunca é gravada nem devolvida em lugar nenhum.\n' +
-'    if (body.acao === "login"){\n' +
-'      var emailBusca = String(body.email || "").trim().toLowerCase();\n' +
-'      var linhasUsr = lerFolha_("Usuarios");\n' +
-'      var achado = null;\n' +
-'      for (var iu=0; iu<linhasUsr.length; iu++){\n' +
-'        if (String(linhasUsr[iu].obj.email || "").trim().toLowerCase() === emailBusca){ achado = linhasUsr[iu].obj; break; }\n' +
-'      }\n' +
-'      var falhaLogin = ContentService.createTextOutput(JSON.stringify({ok:false, erro:"E-mail ou senha inválidos."}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'      if (!achado || !achado.senhaHash || !achado.senhaSalt) return falhaLogin;\n' +
-'      if (hashSenha_(body.senha || "", achado.senhaSalt) !== achado.senhaHash) return falhaLogin;\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true, usuario: semCamposSenha_(achado)}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
-'\n' +
-'    // ITEM 11: troca da própria senha, também verificada aqui — a senha\n' +
-'    // atual é conferida no servidor antes de aceitar a nova (antes, essa\n' +
-'    // checagem era só no navegador, comparando com um campo que nem chega\n' +
-'    // mais ao cliente).\n' +
-'    if (body.acao === "trocarSenha"){\n' +
-'      var quemTroca = buscarUsuario_(body.userId);\n' +
-'      var linha = null;\n' +
-'      var linhasU2 = lerFolha_("Usuarios");\n' +
-'      for (var it=0; it<linhasU2.length; it++){ if (linhasU2[it].obj.id === body.userId){ linha = linhasU2[it]; break; } }\n' +
-'      if (!quemTroca || !linha){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não encontrado"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      if (!linha.obj.senhaHash || hashSenha_(body.senhaAtual || "", linha.obj.senhaSalt) !== linha.obj.senhaHash){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"Senha atual incorreta."}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      var novaSenha = String(body.senhaNova || "");\n' +
-'      if (novaSenha.length < 6){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"A nova senha deve ter 6+ caracteres."}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      var novoSalt = gerarSalt_();\n' +
-'      linha.obj.senhaSalt = novoSalt;\n' +
-'      linha.obj.senhaHash = hashSenha_(novaSenha, novoSalt);\n' +
-'      delete linha.obj.senha;\n' +
-'      gravarLinha_("Usuarios", linha.row, linha.obj);\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
-'\n' +
-'    // ITEM 12: antes, SÓ admin podia gravar qualquer coisa na aba "Usuarios"\n' +
-'    // (inclusive editar o próprio nome/e-mail), porque a gravação genérica\n' +
-'    // dessa aba exige admin — abrir isso pra qualquer um seria arriscado\n' +
-'    // (um usuário poderia montar um payload alterando "papel"/"perms" de\n' +
-'    // qualquer conta, inclusive a própria). Este endpoint dedicado resolve\n' +
-'    // isso com segurança: só mexe na conta de quem está pedindo (body.userId\n' +
-'    // tem que bater com a própria linha), e só nos campos nome/e-mail/senha\n' +
-'    // — nunca papel/perms/id. Funciona pra qualquer usuário, admin ou não.\n' +
-'    if (body.acao === "atualizarPerfil"){\n' +
-'      var quemEdita = buscarUsuario_(body.userId);\n' +
-'      var linhaPerfil = null;\n' +
-'      var linhasPerfil = lerFolha_("Usuarios");\n' +
-'      for (var ip=0; ip<linhasPerfil.length; ip++){\n' +
-'        if (linhasPerfil[ip].obj.id === body.userId){ linhaPerfil = linhasPerfil[ip]; break; }\n' +
-'      }\n' +
-'      if (!quemEdita || !linhaPerfil){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não encontrado"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      var novoNome = String(body.nome || "").trim();\n' +
-'      var novoEmail = String(body.email || "").trim().toLowerCase();\n' +
-'      if (!novoNome || novoEmail.indexOf("@") === -1){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"nome/e-mail inválidos"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      for (var ie=0; ie<linhasPerfil.length; ie++){\n' +
-'        if (linhasPerfil[ie].obj.id !== body.userId && String(linhasPerfil[ie].obj.email || "").trim().toLowerCase() === novoEmail){\n' +
-'          return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"este e-mail já está cadastrado"}))\n' +
-'            .setMimeType(ContentService.MimeType.JSON);\n' +
-'        }\n' +
-'      }\n' +
-'      linhaPerfil.obj.nome = novoNome;\n' +
-'      linhaPerfil.obj.email = novoEmail;\n' +
-'      if (typeof body.senha === "string" && body.senha){\n' +
-'        var saltPerfil = gerarSalt_();\n' +
-'        linhaPerfil.obj.senhaSalt = saltPerfil;\n' +
-'        linhaPerfil.obj.senhaHash = hashSenha_(body.senha, saltPerfil);\n' +
-'      }\n' +
-'      delete linhaPerfil.obj.senha;\n' +
-'      gravarLinha_("Usuarios", linhaPerfil.row, linhaPerfil.obj);\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true, usuario: semCamposSenha_(linhaPerfil.obj)}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
-'\n' +
-'    // ITEM 13: correção definitiva do limite de tamanho — antes, o arquivo\n' +
-'    // (base64) ia dentro da linha gravada como célula única na planilha, e o\n' +
-'    // Google Sheets tem um limite de ~50.000 caracteres por célula. Qualquer\n' +
-'    // arquivo acima de ~35 KB (pouco mais de 46.000 caracteres em base64) já\n' +
-'    // estourava esse limite e o "sh.getRange(...).setValues(...)" lançava uma\n' +
-'    // exceção — derrubando o doPost inteiro, não só aquele documento. Agora o\n' +
-'    // arquivo é gravado direto no Drive por este endpoint dedicado (o corpo\n' +
-'    // do POST não tem esse limite de 50 mil caracteres), e a planilha nunca\n' +
-'    // recebe nada além do "driveId"/"driveUrl" resultantes, que são curtos.\n' +
-'    if (body.acao === "uploadArquivo"){\n' +
-'      if (!solicitante){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"usuário não autenticado"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
+'  // ITEM 13/14: upload de arquivo direto pro Drive. A parte lenta (decodificar\n' +
+'  // + gravar no Drive) roda FORA de qualquer bloqueio — só usamos o\n' +
+'  // LockService, por um instante curto, pra atualizar a linha correspondente\n' +
+'  // na planilha depois que o arquivo já foi criado. Antes (v11), isso tudo\n' +
+'  // ficava preso no mesmo bloqueio global que protege a planilha inteira, e\n' +
+'  // vários uploads em lote ficavam brigando pelo bloqueio, estourando o\n' +
+'  // tempo limite de espera (30s) uns dos outros.\n' +
+'  // Voltou a ser "no-cors" no cliente (a resposta abaixo não é lida pelo\n' +
+'  // navegador) porque o Apps Script não devolve cabeçalho CORS nas respostas\n' +
+'  // de POST — o resultado (driveId ou erroUpload) chega pro navegador no\n' +
+'  // próximo "pull" (leitura via GET, que já provou ser confiável).\n' +
+'  if (body.acao === "uploadArquivo"){\n' +
+'    var resultadoUp = {ok:false, erro:"usuário não autenticado"};\n' +
+'    if (solicitante){\n' +
 '      var dataUrl = String(body.arquivo || "");\n' +
 '      var mArq = dataUrl.match(/^data:(.*?);base64,([\\s\\S]*)$/);\n' +
 '      if (!mArq){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"arquivo inválido"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      try {\n' +
-'        var cacheUp = {};\n' +
-'        var folderUp = ensureDriveFolder_(body.pastaId, cacheUp);\n' +
-'        var bytesUp = Utilities.base64Decode(mArq[2]);\n' +
-'        var nomeArquivo = (body.titulo || "arquivo") + "." + (body.ext || "bin");\n' +
-'        var fileUp = folderUp.createFile(Utilities.newBlob(bytesUp, mArq[1], nomeArquivo));\n' +
-'        fileUp.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:true, driveId: fileUp.getId(), driveUrl: fileUp.getUrl()}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      } catch(eUp) {\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:String(eUp && eUp.message || eUp)}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'    }\n' +
-'\n' +
-'    if (body.acao === "escanearPendentes"){\n' +
-'      if (!ehAdmin_(solicitante)){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      var achados = escanearPendentes_();\n' +
-'      return ContentService.createTextOutput(JSON.stringify(Object.assign({ok:true}, achados)))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
-'\n' +
-'    if (body.acao === "excluirDrive"){\n' +
-'      // ITENS 2/3: antes, qualquer chamador podia mandar excluir qualquer\n' +
-'      // driveId. Agora exigimos que o usuário seja admin, tenha a permissão\n' +
-'      // "excluir"/"excluir_pasta", OU (no caso de pasta) seja quem a criou —\n' +
-'      // checado no servidor, não só no cliente.\n' +
-'      var chavePerm = body.tipo === "pasta" ? "excluir_pasta" : "excluir";\n' +
-'      var ehDono = body.tipo === "pasta" && solicitante && body.criadaPor && body.criadaPor === solicitante.id;\n' +
-'      if (!ehDono && !usuarioTemPermissao_(solicitante, chavePerm)){\n' +
-'        return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"sem permissão para excluir"}))\n' +
-'          .setMimeType(ContentService.MimeType.JSON);\n' +
-'      }\n' +
-'      try{\n' +
-'        if (body.tipo === "pasta" && body.driveId){\n' +
-'          DriveApp.getFolderById(body.driveId).setTrashed(true);\n' +
-'        } else if (body.tipo === "arquivo" && body.driveId){\n' +
-'          DriveApp.getFileById(body.driveId).setTrashed(true);\n' +
+'        resultadoUp = {ok:false, erro:"arquivo inválido"};\n' +
+'      } else {\n' +
+'        try {\n' +
+'          var cacheUp = {};\n' +
+'          var folderUp = ensureDriveFolder_(body.pastaId, cacheUp);\n' +
+'          var bytesUp = Utilities.base64Decode(mArq[2]);\n' +
+'          var nomeArquivo = (body.titulo || "arquivo") + "." + (body.ext || "bin");\n' +
+'          var fileUp = folderUp.createFile(Utilities.newBlob(bytesUp, mArq[1], nomeArquivo));\n' +
+'          fileUp.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);\n' +
+'          resultadoUp = {ok:true, driveId: fileUp.getId(), driveUrl: fileUp.getUrl()};\n' +
+'        } catch(eUp) {\n' +
+'          resultadoUp = {ok:false, erro:String(eUp && eUp.message || eUp)};\n' +
 '        }\n' +
-'        registrarExclusao_(nomeSolicitante, body.tipo, body.nome || body.driveId);\n' +
-'      } catch(e) {}\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'      }\n' +
+'    }\n' +
+'    var lockUp = LockService.getScriptLock();\n' +
+'    lockUp.waitLock(30000);\n' +
+'    try {\n' +
+'      var linhasDocs = lerFolha_("Documentos");\n' +
+'      var achouLinha = null;\n' +
+'      for (var idl=0; idl<linhasDocs.length; idl++){\n' +
+'        if (linhasDocs[idl].obj.id === body.docId){ achouLinha = linhasDocs[idl]; break; }\n' +
+'      }\n' +
+'      var objDoc = achouLinha ? achouLinha.obj : {\n' +
+'        id: body.docId, pastaId: body.pastaId, titulo: body.titulo, tipo: "arquivo",\n' +
+'        ext: body.ext, mime: body.mime, criadoPor: body.userId,\n' +
+'        criadoEm: body.criadoEm || Date.now(), atualizadoEm: Date.now()\n' +
+'      };\n' +
+'      if (resultadoUp.ok){\n' +
+'        objDoc.driveId = resultadoUp.driveId;\n' +
+'        objDoc.driveUrl = resultadoUp.driveUrl;\n' +
+'        objDoc.erroUpload = "";\n' +
+'        objDoc.arquivo = ""; // sinaliza pro cliente limpar a cópia local grande\n' +
+'      } else {\n' +
+'        objDoc.erroUpload = resultadoUp.erro || "Falha ao enviar para o Drive.";\n' +
+'        // não mexe em "arquivo" na falha — o cliente mantém a cópia local\n' +
+'        // pra permitir reenviar sem pedir o arquivo de novo ao usuário.\n' +
+'      }\n' +
+'      if (achouLinha){\n' +
+'        gravarLinha_("Documentos", achouLinha.row, objDoc);\n' +
+'      } else {\n' +
+'        folha_("Documentos").appendRow([JSON.stringify(objDoc)]);\n' +
+'      }\n' +
+'    } finally {\n' +
+'      lockUp.releaseLock();\n' +
+'    }\n' +
+'    return ContentService.createTextOutput(JSON.stringify(resultadoUp))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
+'\n' +
+'  if (body.acao === "excluirDrive"){\n' +
+'    // ITENS 2/3: antes, qualquer chamador podia mandar excluir qualquer\n' +
+'    // driveId. Agora exigimos que o usuário seja admin, tenha a permissão\n' +
+'    // "excluir"/"excluir_pasta", OU (no caso de pasta) seja quem a criou —\n' +
+'    // checado no servidor, não só no cliente.\n' +
+'    var chavePerm = body.tipo === "pasta" ? "excluir_pasta" : "excluir";\n' +
+'    var ehDono = body.tipo === "pasta" && solicitante && body.criadaPor && body.criadaPor === solicitante.id;\n' +
+'    if (!ehDono && !usuarioTemPermissao_(solicitante, chavePerm)){\n' +
+'      return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"sem permissão para excluir"}))\n' +
 '        .setMimeType(ContentService.MimeType.JSON);\n' +
 '    }\n' +
-'\n' +
-'    if (!body.folha || FOLHAS.indexOf(body.folha) === -1 || body.folha === "Excluidos"){\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"folha inválida"}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
+'    var lockExc = LockService.getScriptLock();\n' +
+'    lockExc.waitLock(30000);\n' +
+'    try{\n' +
+'      if (body.tipo === "pasta" && body.driveId){\n' +
+'        DriveApp.getFolderById(body.driveId).setTrashed(true);\n' +
+'      } else if (body.tipo === "arquivo" && body.driveId){\n' +
+'        DriveApp.getFileById(body.driveId).setTrashed(true);\n' +
+'      }\n' +
+'      registrarExclusao_(nomeSolicitante, body.tipo, body.nome || body.driveId);\n' +
+'    } catch(e) {\n' +
+'    } finally {\n' +
+'      lockExc.releaseLock();\n' +
 '    }\n' +
+'    return ContentService.createTextOutput(JSON.stringify({ok:true}))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
 '\n' +
-'    // ITENS 2/3: gravação nas abas sensíveis (Usuarios, Permissoes) só para admin.\n' +
-'    if ((body.folha === "Usuarios" || body.folha === "Permissoes") && !ehAdmin_(solicitante)){\n' +
-'      return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores podem alterar usuários/permissões"}))\n' +
-'        .setMimeType(ContentService.MimeType.JSON);\n' +
-'    }\n' +
+'  if (!body.folha || FOLHAS.indexOf(body.folha) === -1 || body.folha === "Excluidos"){\n' +
+'    return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"folha inválida"}))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
 '\n' +
+'  // ITENS 2/3: gravação nas abas sensíveis (Usuarios, Permissoes) só para admin.\n' +
+'  if ((body.folha === "Usuarios" || body.folha === "Permissoes") && !ehAdmin_(solicitante)){\n' +
+'    return ContentService.createTextOutput(JSON.stringify({ok:false, erro:"apenas administradores podem alterar usuários/permissões"}))\n' +
+'      .setMimeType(ContentService.MimeType.JSON);\n' +
+'  }\n' +
+'\n' +
+'  var lock = LockService.getScriptLock();\n' +
+'  lock.waitLock(30000);\n' +
+'  try {\n' +
 '    // CORREÇÃO (item 8): antes, cada push sobrescrevia a aba inteira só com o\n' +
-'    // que veio no corpo da requisição. Se dois pushes da mesma aba (ex.:\n' +
-'    // "Documentos") chegassem quase juntos — um subindo um arquivo grande\n' +
-'    // (que ainda não tinha voltado com driveId) e outro disparado por\n' +
-'    // qualquer outra ação enquanto isso — o segundo podia sobrescrever a\n' +
-'    // linha do primeiro sem os campos "arquivo"/"driveId" que ele nunca\n' +
-'    // conheceu, apagando o resultado do upload que já tinha sido concluído\n' +
-'    // no Drive. Agora fazemos um merge por "id": campos ausentes no payload\n' +
-'    // recebido preservam o valor já salvo na planilha, em vez de apagá-lo.\n' +
-'    // Só um campo que vem PRESENTE no payload (mesmo vazio, "") sobrescreve.\n' +
+'    // que veio no corpo da requisição. Se dois pushes da mesma aba chegassem\n' +
+'    // quase juntos, o segundo podia sobrescrever a linha do primeiro sem os\n' +
+'    // campos que ele nunca conheceu, apagando resultado já gravado. Agora\n' +
+'    // fazemos um merge por "id": campos ausentes no payload recebido\n' +
+'    // preservam o valor já salvo na planilha, em vez de apagá-lo. Só um\n' +
+'    // campo que vem PRESENTE no payload (mesmo vazio, "") sobrescreve.\n' +
 '    var existentesMap = {};\n' +
 '    lerFolha_(body.folha).forEach(function(item){\n' +
 '      if (item.obj && item.obj.id) existentesMap[item.obj.id] = item.obj;\n' +
@@ -2581,7 +2649,7 @@ function renderSobre(){
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
   '</section>' +
-  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 11</h2></div>' +
+  '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO 12</h2></div>' +
     '<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
   $('#gasCode').textContent = SCRIPT_GAS;
@@ -2811,6 +2879,7 @@ document.addEventListener('click', e => {
       break;
     }
     case 'ver-doc': modalVer(id); break;
+    case 'reenviar-doc': reenviarUpload(id); break;
     case 'mover-doc': {
       const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
       if(!permsDoc(d).includes('editar')){ toast('Sem permissão para mover este arquivo.','error'); break; }
