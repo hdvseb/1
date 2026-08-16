@@ -257,8 +257,8 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 .docx-view td,.docx-view th{border:1px solid var(--border);padding:6px 8px;font-size:13px}
 .table-x{overflow:visible;max-height:none;margin-bottom:12px}
 .sheet-title{margin:14px 0 6px;color:var(--heading);font-size:14px}
-.pdf-frame{width:100%;height:62vh;border:1px solid var(--border);border-radius:10px;background:#525659}
-.pdf-restrito{height:62vh;overflow:auto;background:#525659;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px;align-items:center;user-select:none;-webkit-user-select:none}
+.pdf-frame{width:100%;height:70vh;max-height:calc(92vh - 220px);border:1px solid var(--border);border-radius:10px;background:#525659;overflow-y:auto;display:block}
+.pdf-restrito{height:70vh;max-height:calc(92vh - 220px);overflow-y:auto;background:#525659;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px;align-items:center;user-select:none;-webkit-user-select:none}
 .pdf-restrito .pdf-page{max-width:100%;height:auto;box-shadow:0 6px 18px rgba(0,0,0,.45);border-radius:2px;pointer-events:none}
 .restrito-aviso{width:100%;display:flex;align-items:center;gap:10px;background:rgba(21,82,194,.92);color:#fff;font-size:12.5px;font-weight:700;border-radius:8px;padding:9px 12px;flex:0 0 auto}
 .prev-img{display:block;margin:0 auto;max-width:100%;border-radius:10px;border:1px solid var(--border)}
@@ -563,6 +563,16 @@ function filtrarTombstones_(folha, rows){
   });
 }
 let pullTimer = null;
+// ITEM 6: antes, agendarPull disparava um único pull 3.5s depois do push e
+// parava por aí — se o servidor ainda não tivesse terminado de gravar o
+// driveId (upload em lote, fila do LockService, etc.), a mensagem "Enviando
+// para o Drive…" ficava travada pra sempre na tela, mesmo com o arquivo já
+// salvo no Drive, até o usuário fazer alguma outra ação que reagendasse um
+// pull. Agora, enquanto existir algum arquivo sem driveId/erroUpload,
+// continuamos reagendando o pull automaticamente até o status ser resolvido.
+function existeUploadPendente_(){
+  return DB.get('Documentos').some(d => d.tipo === 'arquivo' && !d.driveId && !d.erroUpload);
+}
 function agendarPull(){
   if(!Sync.url()) return;
   clearTimeout(pullTimer);
@@ -574,7 +584,8 @@ function agendarPull(){
           else { session = null; store.set('rio_session',''); mostrarLogin(); }
         }
       }
-    }).catch(() => {});
+      if(existeUploadPendente_()) agendarPull();
+    }).catch(() => { if(existeUploadPendente_()) agendarPull(); });
   }, 3500);
 }
 function pullViaJSONP(url){
@@ -1512,7 +1523,9 @@ function renderDashboard(){
   if(state.currentFolderId && (!atual || !permsEff(u.id, atual).includes('visualizar'))) state.currentFolderId = null;
   const perms = permsAtuais();
   const vm = VIEW_MODES.find(v => v.m === state.viewMode) || VIEW_MODES[5];
-  const totalArquivos = itensVisiveis().docs.length;
+  const itensAtuais = itensVisiveis();
+  const totalArquivos = itensAtuais.docs.length;
+  const totalPastas = itensAtuais.folders.length;
   $('#viewRoot').innerHTML =
   '<div class="view">' +
     '<h1 class="page-title">Dashboard</h1>' +
@@ -1541,10 +1554,10 @@ function renderDashboard(){
         '<div class="breadcrumb" id="breadcrumb"></div>' +
         '<div class="sel-row-actions">' +
           '<div class="sel-row-btns">' +
-            '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Desmarcar' : 'Selecionar') + '</button>' +
             (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Marcar todos</button>' : '') +
+            '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Desmarcar' : 'Selecionar') + '</button>' +
           '</div>' +
-          '<span class="contagem-arquivos"><i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
+          '<span class="contagem-arquivos"><i class="fa-solid fa-folder"></i> ' + totalPastas + ' pasta' + (totalPastas === 1 ? '' : 's') + ' &nbsp;•&nbsp; <i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
         '</div>' +
       '</div>' +
       '<div id="itens"></div>' +
@@ -1686,7 +1699,7 @@ function renderItens(){
         const tam = d.tamanho ? ' • ' + fmtTam(d.tamanho) : '';
         const statusDrive = d.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(d.erroUpload) + '"></i> Falha no envio'
           : d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive'
-          : Sync.url() ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…' : '';
+          : (d.tipo === 'arquivo' && Sync.url()) ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…' : '';
         return '<div class="item-row' + selCls('doc', d.id) + '">' +
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
@@ -1737,9 +1750,9 @@ function modalDoc(docId){
   const isFile = d && d.tipo === 'arquivo';
   openModal('<h3><i class="fa-solid ' + (isFile ? catInfo(d).ic : 'fa-file-pen') + '"></i> ' + (d ? (isFile ? 'Renomear arquivo' : 'Editar documento') : 'Novo documento') + '</h3>' +
     '<label class="campo">Título<input id="mTitulo" value="' + (d ? esc(d.titulo) : '') + '"></label>' +
+    '<label class="campo">Descrição<textarea id="mDescricao" rows="3" placeholder="Descreva o conteúdo deste arquivo (opcional)">' + (d && d.descricao ? esc(d.descricao) : '') + '</textarea></label>' +
     (isFile
-      ? '<p class="modal-sub"><i class="fa-solid fa-circle-info"></i> Use o botão "caneta" na lista para abrir o editor de DOCX/XLSX. Aqui você apenas renomeia o arquivo.</p>' +
-        '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+      ? '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
         '<button class="btn btn-primary" data-action="salvar-doc" data-id="' + (d ? d.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>'
       : '<label class="campo">Conteúdo<textarea id="mConteudo" rows="12"></textarea></label>' +
         '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
@@ -1758,7 +1771,7 @@ function modalEditarUsuario(userId){
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="salvar-dados-usuario" data-id="' + x.id + '"><i class="fa-solid fa-floppy-disk"></i> Salvar</button></div>');
 }
-function noPrev(ci){ return '<div class="no-prev"><i class="fa-solid ' + ci.ic + '"></i>Pré-visualização indisponível para este formato.<br>Use "Baixar" ou "Abrir no Drive".</div>'; }
+function noPrev(ci){ return '<div class="no-prev"><i class="fa-solid ' + ci.ic + '"></i>Pré-visualização indisponível para este formato.<br>Use "Baixar" para abrir no aplicativo correspondente.</div>'; }
 function modalVer(docId){
   const d = DB.get('Documentos').find(x => x.id === docId); if(!d) return;
   const cat = categoria(d), ci = catInfo(d);
@@ -1779,14 +1792,14 @@ function modalVer(docId){
     if(cat === 'pdf'){
       if(!protegido && d.arquivo){
         currentBlobUrl = dataURLtoBlobUrl(d.arquivo);
-        corpo = '<iframe class="pdf-frame" src="' + currentBlobUrl + '"></iframe>';
+        corpo = '<iframe class="pdf-frame" scrolling="yes" src="' + currentBlobUrl + '"></iframe>';
       } else if(!protegido && drivePrev){
         // Arquivo já sincronizado no Drive e sem restrição de download/impressão:
         // usa a pré-visualização pública do próprio Drive em vez do fluxo
         // "protegido" (que dependia de baixar o binário via fetch e falhava
         // por CORS, mostrando "Visualização protegida indisponível" mesmo
         // para quem tinha permissão total).
-        corpo = '<iframe class="pdf-frame" src="' + drivePrev + '"></iframe>';
+        corpo = '<iframe class="pdf-frame" scrolling="yes" src="' + drivePrev + '"></iframe>';
       } else {
         corpo = '<div class="pdf-restrito" id="pdfRestrito"><div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div></div>';
         pdfPendente = {doc: d};
@@ -1796,7 +1809,7 @@ function modalVer(docId){
       corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><img class="prev-img" src="' + (d.arquivo ? d.arquivo : 'https://lh3.googleusercontent.com/d/' + d.driveId) + '" alt=""></div>';
     }
     else if(cat === 'video'){
-      corpo = d.arquivo ? '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><video class="prev-media" controls src="' + d.arquivo + '"></video></div>' : '<iframe class="pdf-frame" src="' + drivePrev + '"></iframe>';
+      corpo = d.arquivo ? '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><video class="prev-media" controls src="' + d.arquivo + '"></video></div>' : '<iframe class="pdf-frame" scrolling="yes" src="' + drivePrev + '"></iframe>';
     }
     else if(cat === 'audio' && d.arquivo){
       corpo = '<div style="padding:24px 0"><audio controls style="width:100%" src="' + d.arquivo + '"></audio></div>';
@@ -1818,7 +1831,6 @@ function modalVer(docId){
       ? '<button class="btn btn-light" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i> Baixar</button>'
       : '<button class="btn btn-light" disabled title="Download não permitido"><i class="fa-solid fa-lock"></i> Baixar</button>') +
     (podeImprimir ? '<button class="btn btn-light" data-action="imprimir-doc" data-id="' + d.id + '"><i class="fa-solid fa-print"></i> Imprimir</button>' : '') +
-    (podeBaixar && d.driveUrl ? '<button class="btn btn-light" data-action="abrir-drive" data-id="' + d.id + '"><i class="fa-brands fa-google-drive"></i> Abrir no Drive</button>' : '') +
     (pd.includes('editar') ? '<button class="btn btn-light" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button>' : '') +
     (pd.includes('editar') ? '<button class="btn btn-light" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i> Editar</button>' : '') +
     '<button class="btn btn-primary" data-action="fechar-modal">Fechar</button>';
@@ -1829,6 +1841,7 @@ function modalVer(docId){
     '<span><i class="fa-solid fa-shield-halved"></i>' + icoPerms(pd) + '</span>' +
     '<span><i class="fa-solid fa-clock"></i>' + fmtData(d.atualizadoEm || d.criadoEm) + '</span>' +
     (d.tamanho ? '<span><i class="fa-solid fa-database"></i>' + fmtTam(d.tamanho) + '</span>' : '') + '</div>' +
+    (d.descricao ? '<p class="modal-sub" style="margin-top:-8px"><i class="fa-solid fa-align-left"></i> ' + esc(d.descricao) + '</p>' : '') +
     corpo + '<div class="modal-actions">' + acoes + '</div>');
 
   const cont0 = $('#officePrev');
@@ -2746,8 +2759,9 @@ document.addEventListener('click', e => {
       renderDashboard();
       break;
     case 'selecionar-todos': {
-      const {docs} = itensVisiveis();
+      const {docs, folders} = itensVisiveis();
       docs.forEach(d => state.selecao.add(selKey('doc', d.id)));
+      folders.forEach(p => state.selecao.add(selKey('pasta', p.id)));
       renderItens(); renderSelBar();
       break;
     }
@@ -3047,12 +3061,6 @@ document.addEventListener('click', e => {
       if(!permsDoc(d).includes('download')){ toast('Sem permissão de download para este arquivo. Solicite acesso ao administrador.','error'); break; }
       baixarArquivo(d); toast('Download iniciado.','info'); break;
     }
-    case 'abrir-drive': {
-      const d = DB.get('Documentos').find(x => x.id === id);
-      if(d && d.driveUrl && permsDoc(d).includes('download')) window.open(d.driveUrl, '_blank');
-      else toast('Sem permissão de download para este arquivo.','error');
-      break;
-    }
     case 'toggle-perm':
       el.classList.toggle('on');
       atualizarPcount(el.closest('.prow'));
@@ -3151,21 +3159,22 @@ document.addEventListener('click', e => {
     case 'salvar-doc': {
       const titulo = ($('#mTitulo') || {}).value.trim();
       if(!titulo){ toast('Informe um título para o documento.','error'); return; }
+      const descricao = ($('#mDescricao') || {}).value.trim();
       const docs = DB.get('Documentos');
       if(id){
         const ex = docs.find(x => x.id === id);
         if(ex && ex.tipo === 'arquivo'){
-          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, atualizadoEm:Date.now()}) : x));
+          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, descricao:descricao, atualizadoEm:Date.now()}) : x));
           toast('Arquivo renomeado.');
         } else {
           const conteudo = ($('#mConteudo') || {}).value;
-          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, conteudo:conteudo, atualizadoEm:Date.now()}) : x));
+          DB.set('Documentos', docs.map(x => x.id === id ? Object.assign({}, x, {titulo:titulo, descricao:descricao, conteudo:conteudo, atualizadoEm:Date.now()}) : x));
           toast('Documento atualizado.');
         }
       } else {
         if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
         const conteudo = ($('#mConteudo') || {}).value;
-        docs.push({id: uid('d'), pastaId: state.currentFolderId, titulo:titulo, tipo:'texto', conteudo:conteudo, criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()});
+        docs.push({id: uid('d'), pastaId: state.currentFolderId, titulo:titulo, descricao:descricao, tipo:'texto', conteudo:conteudo, criadoPor:u.id, criadoEm:Date.now(), atualizadoEm:Date.now()});
         DB.set('Documentos', docs);
         toast('Documento gravado com sucesso.');
       }
