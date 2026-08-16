@@ -269,7 +269,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 .docx-view td,.docx-view th{border:1px solid var(--border);padding:6px 8px;font-size:13px}
 .table-x{overflow:visible;max-height:none;margin-bottom:12px}
 .sheet-title{margin:14px 0 6px;color:var(--heading);font-size:14px}
-.pdf-frame{width:100%;height:70vh;max-height:calc(92vh - 220px);border:1px solid var(--border);border-radius:10px;background:#525659;overflow-y:auto;display:block}
+.pdf-frame{width:100%;height:70vh;max-height:calc(92vh - 220px);border:1px solid var(--border);border-radius:10px;background:#525659;display:block}
 .pdf-restrito{height:70vh;max-height:calc(92vh - 220px);overflow-y:auto;background:#525659;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px;align-items:center;user-select:none;-webkit-user-select:none}
 .pdf-restrito .pdf-page{max-width:100%;height:auto;box-shadow:0 6px 18px rgba(0,0,0,.45);border-radius:2px;pointer-events:none}
 .restrito-aviso{width:100%;display:flex;align-items:center;gap:10px;background:rgba(21,82,194,.92);color:#fff;font-size:12.5px;font-weight:700;border-radius:8px;padding:9px 12px;flex:0 0 auto}
@@ -277,6 +277,19 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 .prev-media{width:100%;max-height:56vh;border-radius:10px;background:#000}
 .no-prev{padding:44px 20px;text-align:center;background:#f5f8fc;border-radius:10px;color:var(--muted)}
 .no-prev i{font-size:44px;display:block;margin-bottom:12px;color:#9fb2d3}
+/* ITEM: a barra de rolagem do MODAL (fora) rolava o card inteiro (título,
+   metadados, ações), mas a pré-visualização (iframe do Drive/PDF) tem altura
+   fixa e cuidava da própria rolagem por dentro — duas barras de rolagem
+   "competindo" faziam parecer que dava pra rolar mas o conteúdo de baixo do
+   documento nunca aparecia. Quando o modal é de visualização de documento
+   (classe .modal-doc-view), o card vira uma coluna flex: cabeçalho e botões
+   ficam fixos, e só a área de pré-visualização (.doc-viewer-corpo) rola,
+   ocupando todo o espaço restante — sem disputa entre duas barras.  */
+.modal-card.modal-doc-view{display:flex;flex-direction:column;max-height:92vh;overflow:hidden}
+.modal-card.modal-doc-view>*{flex:0 0 auto}
+.modal-card.modal-doc-view .doc-viewer-corpo{flex:1 1 auto;min-height:240px;overflow-y:auto;margin-bottom:14px}
+.modal-card.modal-doc-view .doc-viewer-corpo .pdf-frame,
+.modal-card.modal-doc-view .doc-viewer-corpo .pdf-restrito{height:100%;max-height:none}
 /* ===== configurações ===== */
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .cfg-body{padding:18px 22px}
@@ -1412,7 +1425,12 @@ function toast(msg, tipo){
   $('#toasts').appendChild(t);
   setTimeout(() => { t.classList.add('saindo'); setTimeout(() => t.remove(), 320); }, 4200);
 }
-function openModal(html){ $('#modalCard').innerHTML = html; $('#modalOverlay').classList.remove('hidden'); }
+function openModal(html, extraClass){
+  const card = $('#modalCard');
+  card.innerHTML = html;
+  card.className = 'modal-card' + (extraClass ? ' ' + extraClass : '');
+  $('#modalOverlay').classList.remove('hidden');
+}
 function fecharModal(){
   $('#modalOverlay').classList.add('hidden');
   bloqueioAtivo = false; pdfPendente = null; officePendente = null; sheetState = null; camPages = [];
@@ -1885,7 +1903,8 @@ function modalVer(docId){
     '<span><i class="fa-solid fa-clock"></i>' + fmtData(d.atualizadoEm || d.criadoEm) + '</span>' +
     (d.tamanho ? '<span><i class="fa-solid fa-database"></i>' + fmtTam(d.tamanho) + '</span>' : '') + '</div>' +
     (d.descricao ? '<p class="modal-sub" style="margin-top:-8px"><i class="fa-solid fa-align-left"></i> ' + esc(d.descricao) + '</p>' : '') +
-    corpo + '<div class="modal-actions">' + acoes + '</div>');
+    '<div class="doc-viewer-corpo">' + corpo + '</div>' +
+    '<div class="modal-actions">' + acoes + '</div>', 'modal-doc-view');
 
   const cont0 = $('#officePrev');
   if(officePendente && cont0){
