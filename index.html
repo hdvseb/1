@@ -87,6 +87,17 @@ button{font-family:inherit}
 .viewmenu{position:relative}
 .viewmenu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:80;min-width:220px;display:none;max-height:340px;overflow-y:auto}
 .viewmenu-pop.open{display:block;animation:pop .18s ease}
+/* ===== menu de ações "três pontinhos" (usado no celular) ===== */
+.item-menu{position:relative;display:inline-flex}
+.item-menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:90;min-width:210px;display:none}
+.item-menu-pop.open{display:block;animation:pop .18s ease}
+.menu-line{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;text-align:left;padding:10px 12px;border-radius:8px;font:inherit;font-size:13.5px;font-weight:600;color:var(--text);cursor:pointer}
+.menu-line:hover{background:#f4f8ff}
+.menu-line i{width:16px;text-align:center;color:var(--primary)}
+.menu-line.danger{color:var(--danger)}
+.menu-line.danger i{color:var(--danger)}
+.menu-line.locked{color:#9aa7c0;cursor:not-allowed}
+.menu-line.locked i{color:#9aa7c0}
 .vm-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:none;background:none;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--text);cursor:pointer;text-align:left}
 .vm-item:hover{background:#f2f7ff}
 .vm-item.active{background:#e3edff;color:var(--primary)}
@@ -1591,10 +1602,49 @@ function renderSelBar(){
     '<button class="btn btn-light" data-action="limpar-selecao"><i class="fa-solid fa-xmark"></i> Limpar seleção</button>' +
   '</div>';
 }
-function btnBaixar(d, permitido){
+/* ===== ações de item (pasta/documento) — botões no desktop, menu "⋮" no celular =====
+   ITEM (celular): cada linha tinha 4-6 ícones lado a lado, apertados demais na
+   tela pequena. Agora, no celular, as ações viram um único botão "⋮" que abre
+   um menu com a lista de ações (mesmo padrão do Google Drive mobile). No
+   computador o comportamento visual não muda — continuam sendo os ícones. */
+function acaoBaixarDescr_(d, permitido){
   return permitido
-    ? '<button class="btn-ic" title="Baixar" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i></button>'
-    : '<button class="btn-ic locked" title="Download não permitido pela sua permissão" disabled><i class="fa-solid fa-lock"></i></button>';
+    ? {ic:'fa-download', title:'Baixar', action:'baixar-doc', id:d.id}
+    : {ic:'fa-lock', title:'Download não permitido pela sua permissão', disabled:true};
+}
+function itemBotao_(o){
+  if(o.disabled) return '<button class="btn-ic locked" title="' + esc(o.title) + '" disabled><i class="fa-solid ' + o.ic + '"></i></button>';
+  return '<button class="btn-ic' + (o.danger ? ' danger' : '') + '" title="' + esc(o.title) + '" data-action="' + o.action + '" data-id="' + esc(o.id) + '"><i class="fa-solid ' + o.ic + '"></i></button>';
+}
+function itemMenuLinha_(o){
+  if(o.disabled) return '<div class="menu-line locked"><i class="fa-solid ' + o.ic + '"></i>' + esc(o.title) + '</div>';
+  return '<button class="menu-line' + (o.danger ? ' danger' : '') + '" data-action="' + o.action + '" data-id="' + esc(o.id) + '" data-fecha-menu="1"><i class="fa-solid ' + o.ic + '"></i>' + esc(o.title) + '</button>';
+}
+function renderAcoes_(itens, tipo, id){
+  itens = itens.filter(Boolean);
+  if(!itens.length) return '';
+  if(ehMobile()){
+    const menuId = 'menuItem-' + tipo + '-' + id;
+    return '<div class="item-menu"><button class="btn-ic" data-action="toggle-item-menu" data-target="' + menuId + '" title="Mais ações"><i class="fa-solid fa-ellipsis-vertical"></i></button>' +
+      '<div class="item-menu-pop" id="' + menuId + '">' + itens.map(itemMenuLinha_).join('') + '</div></div>';
+  }
+  return itens.map(itemBotao_).join('');
+}
+function itensPasta_(p, dono, perms){
+  return [
+    dono ? {ic:'fa-share-nodes', title:'Permissões da pasta', action:'compartilhar', id:p.id} : null,
+    (dono || perms.includes('excluir_pasta')) ? {ic:'fa-trash-can', title:'Excluir pasta', action:'excluir-pasta', id:p.id, danger:true} : null
+  ];
+}
+function itensDoc_(d, pd){
+  return [
+    {ic:'fa-eye', title:'Visualizar / ler', action:'ver-doc', id:d.id},
+    acaoBaixarDescr_(d, pd.includes('download')),
+    d.erroUpload ? {ic:'fa-rotate-right', title:'Reenviar para o Drive (' + d.erroUpload + ')', action:'reenviar-doc', id:d.id} : null,
+    pd.includes('editar') ? {ic:'fa-folder-tree', title:'Mover para outra pasta', action:'mover-doc', id:d.id} : null,
+    pd.includes('editar') ? {ic:'fa-pen', title:'Editar / renomear', action:'editar-doc', id:d.id} : null,
+    pd.includes('excluir') ? {ic:'fa-trash-can', title:'Excluir', action:'excluir-doc', id:d.id, danger:true} : null
+  ];
 }
 function itensVisiveis(){
   const u = currentUser();
@@ -1625,16 +1675,8 @@ function renderItens(){
     const mode = state.viewMode || 'detalhes';
     const grid = ['xg','g','m','p'].includes(mode);
 
-    const acoesPasta = (p, dono) =>
-      (dono ? '<button class="btn-ic" title="Permissões da pasta" data-action="compartilhar" data-id="' + p.id + '"><i class="fa-solid fa-share-nodes"></i></button>' : '') +
-      ((dono || perms.includes('excluir_pasta')) ? '<button class="btn-ic danger" title="Excluir pasta" data-action="excluir-pasta" data-id="' + p.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
-    const acoesDoc = (d, pd) =>
-      '<button class="btn-ic" title="Visualizar / ler" data-action="ver-doc" data-id="' + d.id + '"><i class="fa-solid fa-eye"></i></button>' +
-      btnBaixar(d, pd.includes('download')) +
-      (d.erroUpload ? '<button class="btn-ic" title="Reenviar para o Drive (' + esc(d.erroUpload) + ')" data-action="reenviar-doc" data-id="' + d.id + '"><i class="fa-solid fa-rotate-right"></i></button>' : '') +
-      (pd.includes('editar') ? '<button class="btn-ic" title="Mover para outra pasta" data-action="mover-doc" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i></button>' : '') +
-      (pd.includes('editar') ? '<button class="btn-ic" title="Editar / renomear" data-action="editar-doc" data-id="' + d.id + '"><i class="fa-solid fa-pen"></i></button>' : '') +
-      (pd.includes('excluir') ? '<button class="btn-ic danger" title="Excluir" data-action="excluir-doc" data-id="' + d.id + '"><i class="fa-solid fa-trash-can"></i></button>' : '');
+    const acoesPasta = (p, dono) => renderAcoes_(itensPasta_(p, dono, perms), 'pasta', p.id);
+    const acoesDoc = (d, pd) => renderAcoes_(itensDoc_(d, pd), 'doc', d.id);
     const chk = (tipo, itemId) => !state.selecaoAtiva ? '' :
       '<input type="checkbox" class="sel-chk" data-action="toggle-sel" data-tipo="' + tipo + '" data-id="' + itemId + '" ' + (state.selecao.has(selKey(tipo, itemId)) ? 'checked' : '') + '>';
     const selCls = (tipo, itemId) => state.selecaoAtiva && state.selecao.has(selKey(tipo, itemId)) ? ' sel-row' : '';
@@ -2691,10 +2733,18 @@ function renderSobre(){
 document.addEventListener('click', e => {
   const pop = $('.viewmenu-pop.open');
   if(pop && !e.target.closest('.viewmenu')) pop.classList.remove('open');
+  if(!e.target.closest('.item-menu')){
+    document.querySelectorAll('.item-menu-pop.open').forEach(p => p.classList.remove('open'));
+  }
   const el = e.target.closest('[data-action]');
   if(!el) return;
   const a = el.dataset.action;
   const id = el.dataset.id || null;
+  // ITEM: ação escolhida dentro do menu "⋮" (celular) — fecha o menu na hora,
+  // antes de executar a ação, pra não ficar sobreposto na tela.
+  if(el.dataset.fechaMenu){
+    document.querySelectorAll('.item-menu-pop.open').forEach(p => p.classList.remove('open'));
+  }
 
   if(a === 'recarregar'){ location.reload(); return; }
 
@@ -2737,6 +2787,13 @@ document.addEventListener('click', e => {
       break;
     case 'menu-view': {
       const p = $('#viewPop'); if(p) p.classList.toggle('open');
+      break;
+    }
+    case 'toggle-item-menu': {
+      const alvo = document.getElementById(el.dataset.target);
+      const jaAberto = alvo && alvo.classList.contains('open');
+      document.querySelectorAll('.item-menu-pop.open').forEach(p => p.classList.remove('open'));
+      if(alvo && !jaAberto) alvo.classList.add('open');
       break;
     }
     case 'set-view':
