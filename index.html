@@ -1657,11 +1657,11 @@ function itensPasta_(p, dono, perms){
 }
 function itensDoc_(d, pd){
   return [
-    {ic:'fa-eye', title:'Visualizar / ler', action:'ver-doc', id:d.id},
+    {ic:'fa-eye', title:'Visualizar', action:'ver-doc', id:d.id},
     acaoBaixarDescr_(d, pd.includes('download')),
     d.erroUpload ? {ic:'fa-rotate-right', title:'Reenviar para o Drive (' + d.erroUpload + ')', action:'reenviar-doc', id:d.id} : null,
-    pd.includes('editar') ? {ic:'fa-folder-tree', title:'Mover para outra pasta', action:'mover-doc', id:d.id} : null,
-    pd.includes('editar') ? {ic:'fa-pen', title:'Editar / renomear', action:'editar-doc', id:d.id} : null,
+    pd.includes('editar') ? {ic:'fa-folder-tree', title:'Mover', action:'mover-doc', id:d.id} : null,
+    pd.includes('editar') ? {ic:'fa-pen', title:'Editar', action:'editar-doc', id:d.id} : null,
     pd.includes('excluir') ? {ic:'fa-trash-can', title:'Excluir', action:'excluir-doc', id:d.id, danger:true} : null
   ];
 }
