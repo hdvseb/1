@@ -38,7 +38,7 @@ button{font-family:inherit}
 /* ===== login ===== */
 .login-screen{min-height:100vh;min-height:100dvh;display:grid;place-items:center;background:linear-gradient(160deg,#0b2f7d 0%,#1552c2 55%,#2f7ae0 100%);padding:24px}
 .login-card{background:#fff;border-radius:16px;padding:36px 34px;width:min(430px,94vw);box-shadow:0 24px 60px rgba(0,20,60,.35);animation:fadeUp .45s ease}
-.login-card img{width:270px;height:100px;display:block;margin:0 auto 14px;object-fit:contain;max-height:110px}
+.login-card img{width:210px;display:block;margin:0 auto 14px;object-fit:contain;max-height:90px}
 .login-card h1{font-size:20px;color:var(--heading);text-align:center;margin-bottom:18px}
 .login-status{margin:-8px 0 14px;text-align:center;font-size:12px;color:var(--muted)}
 .login-status i{margin-right:5px}
@@ -51,7 +51,7 @@ button{font-family:inherit}
 .erro{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:6px}
 /* ===== shell ===== */
 .topbar{height:66px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 20px;position:sticky;top:0;z-index:40}
-.topbar .logo-rio{height:46px;width:auto;max-width:240px;object-fit:contain}
+.topbar .logo-rio{height:46px;width:auto;max-width:220px;object-fit:contain}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:14px}
 .user-hello{color:var(--heading);font-weight:700;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .menu-toggle{display:none;border:none;background:none;font-size:20px;color:var(--primary);cursor:pointer}
@@ -330,7 +330,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 @media(max-width:700px){
   .login-screen{padding:16px;align-items:center}
   .login-card{padding:28px 22px;width:100%}
-  .login-card img{width:210px;height:78px;max-height:90px}
+  .login-card img{width:170px;max-height:74px}
   .login-card h1{font-size:18px;margin-bottom:14px}
   .topbar{padding:0 12px;gap:8px;height:58px}
   .topbar .logo-rio{height:36px}
@@ -370,7 +370,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 <!-- ==================== LOGIN ==================== -->
 <div id="loginScreen" class="login-screen">
   <div class="login-card">
-    <img id="loginLogo" alt="Logotipo" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22420%22%20height%3D%22150%22%20viewBox%3D%220%200%20420%20150%22%3E%3Crect%20width%3D%22420%22%20height%3D%22150%22%20fill%3D%22%23ffffff%22%2F%3E%3Cg%20transform%3D%22translate%2842%2C22%29%22%3E%3Crect%20x%3D%2242%22%20y%3D%220%22%20width%3D%2224%22%20height%3D%2268%22%20rx%3D%2212%22%20fill%3D%22%230b4963%22%2F%3E%3Crect%20x%3D%2270%22%20y%3D%220%22%20width%3D%2224%22%20height%3D%2268%22%20rx%3D%2212%22%20fill%3D%22%23c79a3b%22%2F%3E%3Cpath%20d%3D%22M30%2078%20Q68%20104%20106%2078%22%20fill%3D%22none%22%20stroke%3D%22%230b4963%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fg%3E%3Ctext%20x%3D%22158%22%20y%3D%2272%22%20font-family%3D%22Arial%2CSegoe%20UI%2Csans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22700%22%20letter-spacing%3D%220.5%22%20fill%3D%22%230b4963%22%3ETORQUATO%3C%2Ftext%3E%3Ctext%20x%3D%22160%22%20y%3D%22101%22%20font-family%3D%22Arial%2CSegoe%20UI%2Csans-serif%22%20font-size%3D%2214%22%20font-weight%3D%22500%22%20letter-spacing%3D%224%22%20fill%3D%22%237b8ca8%22%3ECONSULTORIA%3C%2Ftext%3E%3C%2Fsvg%3E">
+    <img id="loginLogo" alt="Logotipo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='90'%3E%3Crect width='220' height='90' rx='12' fill='%23eef2f7'/%3E%3Crect x='88' y='16' width='44' height='56' rx='6' fill='%231552c2'/%3E%3Crect x='96' y='28' width='28' height='4' rx='2' fill='%23fff'/%3E%3Crect x='96' y='38' width='28' height='4' rx='2' fill='%23fff'/%3E%3Crect x='96' y='48' width='20' height='4' rx='2' fill='%23fff'/%3E%3C/svg%3E">
     <h1>Gestão de Documentos</h1>
     <div id="loginStatus" class="login-status hidden"></div>
     <form id="loginForm" autocomplete="off">
@@ -390,7 +390,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
 <div id="app" class="hidden">
   <header class="topbar">
     <button class="menu-toggle" id="menuToggle" title="Menu"><i class="fa-solid fa-bars"></i></button>
-    <img class="logo-rio" id="logoRio" alt="Logotipo" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22420%22%20height%3D%22150%22%20viewBox%3D%220%200%20420%20150%22%3E%3Crect%20width%3D%22420%22%20height%3D%22150%22%20fill%3D%22%23ffffff%22%2F%3E%3Cg%20transform%3D%22translate%2842%2C22%29%22%3E%3Crect%20x%3D%2242%22%20y%3D%220%22%20width%3D%2224%22%20height%3D%2268%22%20rx%3D%2212%22%20fill%3D%22%230b4963%22%2F%3E%3Crect%20x%3D%2270%22%20y%3D%220%22%20width%3D%2224%22%20height%3D%2268%22%20rx%3D%2212%22%20fill%3D%22%23c79a3b%22%2F%3E%3Cpath%20d%3D%22M30%2078%20Q68%20104%20106%2078%22%20fill%3D%22none%22%20stroke%3D%22%230b4963%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fg%3E%3Ctext%20x%3D%22158%22%20y%3D%2272%22%20font-family%3D%22Arial%2CSegoe%20UI%2Csans-serif%22%20font-size%3D%2242%22%20font-weight%3D%22700%22%20letter-spacing%3D%220.5%22%20fill%3D%22%230b4963%22%3ETORQUATO%3C%2Ftext%3E%3Ctext%20x%3D%22160%22%20y%3D%22101%22%20font-family%3D%22Arial%2CSegoe%20UI%2Csans-serif%22%20font-size%3D%2214%22%20font-weight%3D%22500%22%20letter-spacing%3D%224%22%20fill%3D%22%237b8ca8%22%3ECONSULTORIA%3C%2Ftext%3E%3C%2Fsvg%3E">
+    <img class="logo-rio" id="logoRio" alt="Logotipo" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='220'%20height='90'%3E%3Crect%20width='220'%20height='90'%20rx='12'%20fill='%23eef2f7'/%3E%3Crect%20x='88'%20y='16'%20width='44'%20height='56'%20rx='6'%20fill='%231552c2'/%3E%3Crect%20x='96'%20y='28'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='38'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='48'%20width='20'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3C/svg%3E">
     <div class="topbar-right">
       <span id="syncBadge" style="display:none"></span>
       <span class="user-hello" id="userName"></span>
@@ -434,7 +434,7 @@ const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
 const APP_VERSAO = 19;
-const BUILD_ID = 'SGD-GITHUB-V19-CORRIGIDA-FINAL-SEM-VERSAO-NA-TELA';
+const BUILD_ID = 'SGD-GITHUB-V19-CORRIGIDA-FINAL';
 
 // A URL do backend não é mais digitável/editável no app (removido da
 // antiga tela "Sobre" — era a causa de vários "não conecta" quando ficava
