@@ -432,8 +432,8 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 23;
-const BUILD_ID = 'SGD-GITHUB-V23-CORRIGIDA-PERMISSOES';
+const APP_VERSAO = 25;
+const BUILD_ID = 'SGD-GITHUB-V24-CANAL-API-RESERVA';
 
 // A URL do backend não é mais digitável/editável no app (removido da
 // antiga tela "Sobre" — era a causa de vários "não conecta" quando ficava
@@ -647,13 +647,18 @@ function agendarPull(){
     }).catch(() => { if(existeUploadPendente_()) agendarPull(); });
   }, 3500);
 }
-const JSONP_TIMEOUT_MS = 30000;
+const JSONP_TIMEOUT_MS = 25000;
 let jsonpSeq = 0;
 /*
- * GitHub Pages -> Apps Script: chamadas de leitura/controle usam JSONP.
- * NÃO usamos iframe/POST para login, pull ou ações, porque navegadores
- * modernos/Brave podem recusar a página script.google.com dentro de iframe.
- * JSONP carrega a resposta como <script>, sem iframe e sem CORS.
+ * Comunicação GitHub Pages -> Apps Script.
+ *
+ * IMPORTANTE: para login, leitura da planilha e ações normais usamos SOMENTE
+ * JSONP. O fallback por iframe/POST foi removido porque é justamente ele que
+ * provoca o aviso "Permitir acesso de rede?" em ambientes de pré-visualização
+ * e em alguns navegadores.
+ *
+ * Upload de arquivo continua usando POST em iframe separadamente, pois o
+ * payload pode conter base64 e não deve ser colocado na URL.
  */
 function gasCall_(fn,args){
   args=args||[];
@@ -662,7 +667,7 @@ function gasCall_(fn,args){
     const cb='__hddocs_jsonp_'+Date.now()+'_'+(++jsonpSeq);
     const script=document.createElement('script');
     let done=false;
-    const timer=setTimeout(()=>finish(new Error('Tempo esgotado ao consultar o Apps Script.')),JSONP_TIMEOUT_MS);
+    const timer=setTimeout(()=>finish(new Error('Tempo esgotado ao consultar o Apps Script. Verifique se a implantação do Apps Script está publicada para "Qualquer pessoa".')),JSONP_TIMEOUT_MS);
     function cleanup(){
       clearTimeout(timer);
       try{script.remove();}catch(e){}
@@ -673,16 +678,19 @@ function gasCall_(fn,args){
       if(err)reject(err);else resolve(data);
     }
     window[cb]=data=>finish(null,data);
-    script.onerror=()=>finish(new Error('O Apps Script recusou a requisição. Verifique se a implantação /exec está acessível.'));
+    script.onerror=()=>finish(new Error('Não foi possível acessar o Apps Script pelo canal JSONP. Verifique a implantação/publicação da URL /exec.'));
     const q=new URLSearchParams();
-    q.set('api','1'); q.set('fn',fn); q.set('args',JSON.stringify(args)); q.set('callback',cb);
+    q.set('api','1');
+    q.set('fn',fn);
+    q.set('args',JSON.stringify(args));
+    q.set('callback',cb);
+    q.set('_',String(Date.now()));
     script.async=true;
     script.src=DEFAULT_GAS_URL + (DEFAULT_GAS_URL.indexOf('?')>=0?'&':'?') + q.toString();
     document.head.appendChild(script);
   });
 }
-/* POST continua reservado exclusivamente para upload de arquivos, pois
- * payloads binários/base64 não cabem de forma confiável em uma URL JSONP. */
+/* POST é reservado exclusivamente para upload de arquivos. */
 function postApi_(payload){
   if(!DEFAULT_GAS_URL) return Promise.reject(new Error('URL do Apps Script não configurada.'));
   return new Promise((resolve,reject)=>{
@@ -821,7 +829,7 @@ function buscarDadosLogin(){
       const msg = String(err && err.message || '');
       let dica = 'Verifique a implantação /exec do Apps Script e se ela está publicada como "Qualquer pessoa".';
       if(msg.indexOf('Tempo esgotado') !== -1){
-        dica = 'O Apps Script não respondeu. Publique novamente a implantação /exec da versão 23.';
+        dica = 'O Apps Script não respondeu. Publique novamente a implantação /exec da versão 25.';
       }
 
       setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível carregar os dados da planilha. ' + dica);
@@ -848,7 +856,7 @@ function sincronizarInicial(){
       if(!backendAntigo) Sync.pushAll();
     }
     const u = currentUser();
-    // V19 FIX: sessão persistida + cache vazio também precisa da reconciliação
+    // V24 FIX: sessão persistida + cache vazio também precisa da reconciliação
     // Drive -> Sheets; não deixar o Dashboard ficar em 0 pastas após refresh.
     if(u && ehAdmin(u) && DB.get('Pastas').length===0 && !backendAntigo){
       Sync.repararDrive().then(function(res){
@@ -2168,7 +2176,7 @@ function renderConfig(){
     '</div>' +
   '</section>' +
   '<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
-    '<p class="modal-sub" style="padding:0 22px">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>fetch ou JSONP</b>. A URL do backend vem sempre da implantação atual do Apps Script (Code.gs) — não é editável por aqui. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
+    '<p class="modal-sub" style="padding:0 22px">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>JSONP</b>. A URL do backend vem sempre da implantação atual do Apps Script (Code.gs) — não é editável por aqui. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
     '<div class="cfg-body"><div class="integ-row">' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="sincronizar-drive"><i class="fa-solid fa-arrows-rotate"></i> Sincronizar com o Drive</button>' +
@@ -3014,7 +3022,7 @@ $('#loginForm').addEventListener('submit', e => {
       guardarFolhaSeguro('Usuarios', mesclarRows(DB.get('Usuarios'), [usr]).map(normUserRow));
       salvarSessao_({ userId: usr.id, token: res.token });
 
-      // V19 FIX: login válido não é suficiente. Primeiro carregamos os dados
+      // V24 FIX: login válido não é suficiente. Primeiro carregamos os dados
       // reais da planilha com a sessão recém-criada; só depois mostramos o
       // Dashboard. Isso evita entrar com o cache local vazio/desatualizado.
       $('#loginErro').textContent = '';
