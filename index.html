@@ -1326,10 +1326,12 @@ let officePendente = null;
 if(window.pdfjsLib){
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
-async function renderPdfProtegido(bytes, container){
+async function renderPdfProtegido(bytes, container, protegido){
   if(!window.pdfjsLib) throw new Error('pdf.js indisponível');
   const pdf = await window.pdfjsLib.getDocument({data: bytes}).promise;
-  container.innerHTML = '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Visualização protegida — sem barra de download/impressão (' + pdf.numPages + ' página' + (pdf.numPages>1?'s':'') + ')</div>';
+  container.innerHTML = protegido
+    ? '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Visualização protegida — sem barra de download/impressão (' + pdf.numPages + ' página' + (pdf.numPages>1?'s':'') + ')</div>'
+    : '';
   for(let i = 1; i <= pdf.numPages; i++){
     const page = await pdf.getPage(i);
     const viewport = page.getViewport({scale: 1.5});
@@ -1970,20 +1972,20 @@ function modalVer(docId){
     corpo = '<div class="doc-body">' + esc(d.conteudo) + '</div>';
   } else if(d.arquivo || d.driveId){
     if(cat === 'pdf'){
-      if(!protegido && d.arquivo){
-        currentBlobUrl = dataURLtoBlobUrl(d.arquivo);
-        corpo = '<iframe class="pdf-frame" scrolling="yes" src="' + currentBlobUrl + '"></iframe>';
-      } else if(!protegido && drivePrev){
-        // Arquivo já sincronizado no Drive e sem restrição de download/impressão:
-        // usa a pré-visualização pública do próprio Drive em vez do fluxo
-        // "protegido" (que dependia de baixar o binário via fetch e falhava
-        // por CORS, mostrando "Visualização protegida indisponível" mesmo
-        // para quem tinha permissão total).
-        corpo = '<iframe class="pdf-frame" scrolling="yes" src="' + drivePrev + '"></iframe>';
-      } else {
-        corpo = '<div class="pdf-restrito" id="pdfRestrito"><div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div></div>';
-        pdfPendente = {doc: d};
-      }
+      // ITEM: antes, quem tinha permissão total (baixar+imprimir) sempre via
+      // o PDF através do player embutido do Google Drive (iframe de outro
+      // site — a rolagem dali é controlada pelo Drive, não por nós, e não dá
+      // pra "inserir" uma barra nossa dentro da página de outro domínio).
+      // Agora tentamos SEMPRE o nosso próprio visualizador primeiro (páginas
+      // renderizadas em canvas, dentro de uma div com rolagem 100% nossa) —
+      // só caímos para o iframe do Drive se não for possível ler os bytes do
+      // arquivo (o único caso realista: arquivo sem cópia local e a busca ao
+      // Drive falhar por CORS).
+      const aviso = protegido
+        ? '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div>'
+        : '<div class="no-prev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div>';
+      corpo = '<div class="pdf-restrito" id="pdfRestrito">' + aviso + '</div>';
+      pdfPendente = {doc: d, protegido, fallbackIframe: drivePrev};
     }
     else if(cat === 'img'){
       corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><img class="prev-img" src="' + (d.arquivo ? d.arquivo : 'https://lh3.googleusercontent.com/d/' + d.driveId) + '" alt=""></div>';
@@ -2036,10 +2038,22 @@ function modalVer(docId){
   if(pdfPendente){
     const alvo = pdfPendente;
     const cont = $('#pdfRestrito');
-    const falha = () => { if(cont) cont.innerHTML = '<div class="no-prev" style="width:100%"><i class="fa-solid fa-lock"></i>Visualização protegida indisponível para este arquivo.<br>Solicite permissão de download para acessar o conteúdo.</div>'; };
+    const falhaSemAlternativa = () => { if(cont) cont.innerHTML = '<div class="no-prev" style="width:100%"><i class="fa-solid fa-lock"></i>Visualização protegida indisponível para este arquivo.<br>Solicite permissão de download para acessar o conteúdo.</div>'; };
+    // ITEM: quando o nosso visualizador (canvas) não consegue ler os bytes
+    // do arquivo (ex.: sem cópia local e a busca ao Drive falhou por CORS),
+    // caímos de volta para o player embutido do próprio Drive — que sempre
+    // funciona, por ser a página pública do próprio Drive, mas cuja barra de
+    // rolagem é deles, não nossa.
+    const falhaComFallback = () => {
+      if(alvo.fallbackIframe && cont && cont.parentElement){
+        cont.parentElement.innerHTML = '<iframe class="pdf-frame" scrolling="yes" src="' + alvo.fallbackIframe + '"></iframe>';
+      } else {
+        falhaSemAlternativa();
+      }
+    };
     obterBuffer(alvo.doc)
-      .then(buf => renderPdfProtegido(new Uint8Array(buf), cont))
-      .catch(falha);
+      .then(buf => renderPdfProtegido(new Uint8Array(buf), cont, alvo.protegido))
+      .catch(alvo.protegido ? falhaSemAlternativa : falhaComFallback);
   }
 }
 /* ===== PERMISSÕES DA PASTA ===== */
