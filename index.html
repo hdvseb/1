@@ -1282,6 +1282,33 @@ function modalMoverMultiplo(ids){
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="confirmar-mover-multi"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
 }
+/* ITEM: mover PASTA para dentro de outra pasta (não só arquivos). Não deixa
+   escolher a própria pasta nem nenhuma subpasta dela como destino, senão
+   criaria um laço (pasta dentro de si mesma). */
+function descendentesDe_(pastaId){
+  const proibidas = new Set([pastaId]);
+  let mudou = true;
+  while(mudou){
+    mudou = false;
+    DB.get('Pastas').forEach(x => {
+      if(x.parentId && proibidas.has(x.parentId) && !proibidas.has(x.id)){ proibidas.add(x.id); mudou = true; }
+    });
+  }
+  return proibidas;
+}
+function modalMoverPasta(p){
+  const u = currentUser();
+  const proibidas = descendentesDe_(p.id);
+  const destinos = DB.get('Pastas').filter(x => !proibidas.has(x.id) && permsEff(u.id, x).includes('upload'));
+  const opts = (ehAdmin(u) ? '<option value="">Raiz</option>' : '') +
+    destinos.map(x => '<option value="' + x.id + '">' + esc(nomeCaminho(x)) + '</option>').join('');
+  if(!opts){ toast('Nenhuma pasta de destino disponível.','error'); return; }
+  openModal('<h3><i class="fa-solid fa-folder-tree"></i> Mover pasta</h3>' +
+    '<p class="modal-sub"><b>' + esc(p.nome) + '</b> — selecione a pasta de destino. A movimentação também será aplicada no Google Drive.</p>' +
+    '<label class="campo">Pasta de destino<select id="moverPastaDest">' + opts + '</select></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="confirmar-mover-pasta" data-id="' + p.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
+}
 
 /* ===== VISUALIZAÇÃO PROTEGIDA DE PDF ===== */
 let bloqueioAtivo = false;
@@ -1490,9 +1517,14 @@ function ajustarAlturaDocViewer_(){
     const estilo = getComputedStyle(card);
     const padV = parseFloat(estilo.paddingTop) + parseFloat(estilo.paddingBottom);
     const outros = Array.from(card.children).reduce((soma, el) => el === corpo ? soma : soma + el.offsetHeight, 0);
-    const tetoCard = Math.min(window.innerHeight * 0.92, card.scrollHeight || Infinity);
+    // ITEM: antes usava card.scrollHeight como teto — só que, na primeira
+    // medição, o próprio .doc-viewer-corpo ainda estava no tamanho mínimo
+    // (240px), então scrollHeight vinha pequeno e o cálculo ficava "preso"
+    // nesse valor pequeno pra sempre (nunca crescia de fato com a tela).
+    // Agora o teto é só a altura máxima real do modal (92% da viewport).
+    const tetoCard = window.innerHeight * 0.92;
     const disponivel = tetoCard - padV - outros - 14;
-    corpo.style.height = Math.max(240, disponivel) + 'px';
+    corpo.style.height = Math.max(320, disponivel) + 'px';
   };
   calc();
   if(state._ajustarViewerResize) window.removeEventListener('resize', state._ajustarViewerResize);
@@ -1721,9 +1753,9 @@ function renderAcoes_(itens, tipo, id){
 function itensPasta_(p, dono, perms){
   return [
     dono ? {ic:'fa-share-nodes', title:'Permissões da pasta', action:'compartilhar', id:p.id} : null,
-    // ITEM 2: excluir pasta não pode liberar automaticamente só por ser
-    // dono — precisa da permissão "excluir_pasta" mesmo (admin já a possui
-    // sempre, via permsAtuais/permsEff).
+    // ITEM: mover pasta usa a mesma permissão de "excluir_pasta" (gestão de
+    // pastas) — admin sempre tem via permsAtuais/permsEff.
+    perms.includes('excluir_pasta') ? {ic:'fa-folder-tree', title:'Mover', action:'mover-pasta', id:p.id} : null,
     perms.includes('excluir_pasta') ? {ic:'fa-trash-can', title:'Excluir pasta', action:'excluir-pasta', id:p.id, danger:true} : null
   ];
 }
@@ -1820,14 +1852,12 @@ function renderItens(){
     } else {
       el.className = 'itens';
       html = folders.map(p => {
-        const pv = permsEff(u.id, p);
         const dono = p.criadaPor === u.id || ehAdmin(u);
         const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
         return '<div class="item-row' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
           chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
           '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</small></div>' +
-          (dono ? '<span class="tag tag-admin">Controle total</span>' : '<span class="tag tag-arq">' + icoPerms(pv) + '</span>') +
           '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
       }).join('') +
       docs.map(d => {
@@ -1901,7 +1931,6 @@ function modalEditarUsuario(userId){
   const x = getUsuarios().find(y => y.id === userId); if(!x) return;
   if(!(ehAdmin(u) || x.id === u.id)){ toast('Sem permissão para editar este usuário.','error'); return; }
   openModal('<h3><i class="fa-solid fa-user-pen"></i> Editar dados — ' + esc(x.nome) + '</h3>' +
-    '<p class="modal-sub">' + (ehAdmin(u) ? 'Como administrador você pode alterar os dados de qualquer usuário.' : 'Você pode alterar apenas os seus próprios dados.') + '</p>' +
     '<label class="campo">Nome completo<input id="eNome" value="' + esc(x.nome) + '"></label>' +
     '<label class="campo">E-mail<input id="eEmail" type="email" value="' + esc(x.email) + '"></label>' +
     '<label class="campo">Nova senha<input id="eSenha" type="text"></label>' +
@@ -2156,20 +2185,10 @@ function modalNovoUsuario(){
 function renderPerfil(){
   const u = currentUser();
   $('#viewRoot').innerHTML = '<div class="view"><h1 class="page-title">Meu Perfil</h1>' +
-  '<div class="grid-2">' +
-    '<section class="card"><div class="perfil-top"><span class="avatar-lg">' + iniciais(u.nome) + '</span>' +
+    '<section class="card" style="max-width:520px"><div class="perfil-top"><span class="avatar-lg">' + iniciais(u.nome) + '</span>' +
       '<div><div class="perfil-nome">' + esc(u.nome) + '</div><small style="color:var(--muted)">' + esc(u.email) + '</small></div>' +
       '<button class="btn btn-light" style="margin-left:auto" data-action="editar-usuario" data-id="' + u.id + '"><i class="fa-solid fa-user-pen"></i> Editar meus dados</button></div>' +
-    '</section>' +
-    '<section class="card"><div class="card-head"><h2><i class="fa-solid fa-key"></i> Alterar senha</h2></div>' +
-      '<div style="padding:18px 22px">' +
-      '<label class="campo">Senha atual<input id="senhaAtual" type="password"></label>' +
-      '<label class="campo">Nova senha<input id="senhaNova" type="password"></label>' +
-      '<label class="campo">Confirmar nova senha<input id="senhaConf" type="password"></label>' +
-      '<button class="btn btn-primary" data-action="salvar-senha"><i class="fa-solid fa-floppy-disk"></i> Salvar senha</button>' +
-      '</div>' +
-    '</section>' +
-  '</div></div>';
+    '</section></div>';
 }
 /* ITEM 5: log de exclusões. Vem só do backend (aba "Excluidos" da planilha,
    alimentada pelo Apps Script sempre que um arquivo ou pasta é apagado do
@@ -2241,6 +2260,10 @@ const SCRIPT_GAS =
 '   arquivos cujo id do Drive nao existe mais (excluido\n' +
 '   direto no Drive) ou esta na lixeira - uso admin, para\n' +
 '   sincronizar o app com o estado real do Drive.\n' +
+' - Mover pasta/arquivo (campo movePending): move o item de\n' +
+'   verdade dentro do Drive (nao so na planilha) - o arquivo\n' +
+'   ou a pasta fisica sao movidos para dentro da pasta de\n' +
+'   destino no Drive.\n' +
 ' - Escritas em qualquer aba fazem merge por "id" com o\n' +
 '   que ja existe na planilha, em vez de sobrescrever a\n' +
 '   linha inteira - evita perder campos (ex.: driveId) que\n' +
@@ -2429,6 +2452,24 @@ const SCRIPT_GAS =
 '      nome: nome || ""\n' +
 '    })]);\n' +
 '  }catch(e){}\n' +
+'}\n' +
+'\n' +
+'// ITEM: pasta pode ser movida para dentro de outra (mudar parentId) — igual\n' +
+'// ao que já existia para arquivo (movePending + driveId), mas para pasta\n' +
+'// (movePending + driveFolderId): move a pasta física no Drive para dentro\n' +
+'// da pasta física do novo pai.\n' +
+'function processarPasta_(r, cache){\n' +
+'  var out = JSON.parse(JSON.stringify(r));\n' +
+'  if (!out.movePending || !out.driveFolderId) return r;\n' +
+'  try {\n' +
+'    var folder = DriveApp.getFolderById(out.driveFolderId);\n' +
+'    var target = ensureDriveFolder_(out.parentId, cache);\n' +
+'    folder.moveTo(target);\n' +
+'  } catch(e) {\n' +
+'    out.erroUpload = String(e && e.message || e);\n' +
+'  }\n' +
+'  out.movePending = false;\n' +
+'  return out;\n' +
 '}\n' +
 '\n' +
 'function ensureDriveFolder_(pastaId, cache){\n' +
@@ -2815,7 +2856,18 @@ const SCRIPT_GAS =
 '      sh.getRange(1,1,values.length,1).setValues(values);\n' +
 '    }\n' +
 '    if (body.folha === "Pastas"){\n' +
+'      // ITEM: primeiro resolve pastas com movePending (move de verdade a\n' +
+'      // pasta física no Drive), só depois garante driveFolderId nas demais\n' +
+'      // — senão uma pasta recém movida podia "recriar" sua pasta antiga\n' +
+'      // como se ainda estivesse no lugar de origem.\n' +
+'      var changedF = false;\n' +
+'      rows = rows.map(function(r){ var nr = processarPasta_(r, cache); if (nr !== r) changedF = true; return nr; });\n' +
 '      rows.forEach(function(r){ try{ ensureDriveFolder_(r.id, cache); }catch(err){} });\n' +
+'      if (changedF){\n' +
+'        sh.clearContents();\n' +
+'        var v3 = rows.map(function(r){ return [JSON.stringify(r)]; });\n' +
+'        sh.getRange(1,1,v3.length,1).setValues(v3);\n' +
+'      }\n' +
 '    } else if (body.folha === "Documentos"){\n' +
 '      var changed = false;\n' +
 '      rows = rows.map(function(r){ var nr = processarDoc_(r, cache); if (nr !== r) changed = true; return nr; });\n' +
@@ -3324,6 +3376,27 @@ document.addEventListener('click', e => {
         if(state.currentFolderId === id) state.currentFolderId = null;
         toast('Pasta excluída.'); renderDashboard();
       }); break;
+    }
+    case 'mover-pasta': {
+      const p = pastaPorId(id); if(!p) break;
+      if(!permsAtuais().includes('excluir_pasta')){ toast('Sem permissão para mover esta pasta.','error'); break; }
+      modalMoverPasta(p);
+      break;
+    }
+    case 'confirmar-mover-pasta': {
+      const p = pastaPorId(id); if(!p) break;
+      const dest = ($('#moverPastaDest') || {}).value;
+      const destId = dest === '' ? null : dest;
+      if(destId === (p.parentId || null)){ toast('A pasta já está aqui.','info'); break; }
+      const proibidas = descendentesDe_(p.id);
+      if(destId && proibidas.has(destId)){ toast('Não é possível mover uma pasta para dentro dela mesma.','error'); break; }
+      const alvo = destId ? pastaPorId(destId) : null;
+      if(destId && !permsEff(u.id, alvo).includes('upload')){ toast('Sem permissão de upload na pasta de destino.','error'); break; }
+      DB.set('Pastas', DB.get('Pastas').map(x => x.id === id ? Object.assign({}, x, {parentId: destId, movePending: true}) : x));
+      fecharModal();
+      toast('Pasta movida para "' + (alvo ? alvo.nome : 'Raiz') + '". Sincronizando no Drive…');
+      renderDashboard();
+      break;
     }
     case 'compartilhar': modalCompartilhar(id); break;
     case 'perms-user':
