@@ -432,8 +432,8 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 31;
-const BUILD_ID = 'SGD-GITHUB-V30-AUTENTICACAO-ROBUSTA';
+const APP_VERSAO = 33;
+const BUILD_ID = 'SGD-GITHUB-V32-LOGIN-LEGADO-COMPATIVEL';
 
 // A URL do backend não é mais digitável/editável no app (removido da
 // antiga tela "Sobre" — era a causa de vários "não conecta" quando ficava
@@ -762,12 +762,22 @@ const Sync = {
   async login(email,senha){
     try{
       const saltRes=await gasCall_('apiObterSalt',[email]);
-      if(!saltRes||!saltRes.ok||!saltRes.salt) return {ok:false,erro:'E-mail ou senha inválidos.'};
+      if(!saltRes||!saltRes.ok) return {ok:false,erro:'E-mail ou senha inválidos.'};
       if(!window.crypto||!crypto.subtle) return {ok:false,erro:'Seu navegador não suporta autenticação segura.'};
-      const bytes=new TextEncoder().encode(String(senha||'')+'::'+String(saltRes.salt));
-      const digest=await crypto.subtle.digest('SHA-256',bytes);
-      const hash=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
-      return gasCall_('apiLogin',[email,hash]);
+      const enc=new TextEncoder();
+      let salted='';
+      if(saltRes.modo==='salted' && saltRes.salt){
+        const digest=await crypto.subtle.digest('SHA-256',enc.encode(String(senha||'')+'::'+String(saltRes.salt)));
+        salted=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      let unsalted='';
+      // Sempre calculamos também o SHA-256 simples para compatibilidade com
+      // contas criadas por versões antigas. Ele nunca é a senha em texto.
+      if(saltRes.modo==='salted' || saltRes.modo==='unsalted'){
+        const digest=await crypto.subtle.digest('SHA-256',enc.encode(String(senha||'')));
+        unsalted=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      return gasCall_('apiLogin',[email,{salted:salted,unsalted:unsalted}]);
     }catch(e){ return {ok:false,erro:(e&&e.message)||'Não foi possível autenticar.'}; }
   },
   async trocarSenha(userId,senhaAtual,senhaNova){return gasCall_('apiTrocarSenha',[session?session.token:'',senhaAtual,senhaNova]);},
@@ -3016,7 +3026,7 @@ function repararDriveSeNecessario_(){
   });
 }
 
-/* V28 LOGIN: autenticação exclusivamente no servidor; o carregamento do logotipo/dados públicos não bloqueia o envio do login. */
+/* V33 LOGIN: autenticação por hash+salt no cliente; contas legadas são migradas pelo backend no primeiro pedido de salt. */
 /* LOGIN: verificado no servidor (item 11) — a senha nunca é comparada no
    navegador nem fica disponível localmente; só o backend conhece o hash. */
 $('#loginForm').addEventListener('submit', e => {
