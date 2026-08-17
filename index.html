@@ -432,7 +432,7 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 30;
+const APP_VERSAO = 31;
 const BUILD_ID = 'SGD-GITHUB-V30-AUTENTICACAO-ROBUSTA';
 
 // A URL do backend não é mais digitável/editável no app (removido da
@@ -759,7 +759,17 @@ const Sync = {
   escanearPendentes(){return chamarAcaoGet_({acao:'escanearPendentes'});},
   verificarOrfaos(){return chamarAcaoGet_({acao:'verificarOrfaos'});},
   repararDrive(){return gasCall_('apiSincronizarDrive',[session?session.token:'']);},
-  async login(email,senha){return gasCall_('apiLogin',[email,senha]);},
+  async login(email,senha){
+    try{
+      const saltRes=await gasCall_('apiObterSalt',[email]);
+      if(!saltRes||!saltRes.ok||!saltRes.salt) return {ok:false,erro:'E-mail ou senha inválidos.'};
+      if(!window.crypto||!crypto.subtle) return {ok:false,erro:'Seu navegador não suporta autenticação segura.'};
+      const bytes=new TextEncoder().encode(String(senha||'')+'::'+String(saltRes.salt));
+      const digest=await crypto.subtle.digest('SHA-256',bytes);
+      const hash=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      return gasCall_('apiLogin',[email,hash]);
+    }catch(e){ return {ok:false,erro:(e&&e.message)||'Não foi possível autenticar.'}; }
+  },
   async trocarSenha(userId,senhaAtual,senhaNova){return gasCall_('apiTrocarSenha',[session?session.token:'',senhaAtual,senhaNova]);},
   async atualizarPerfil(userId,nome,email,senha){return gasCall_('apiAtualizarPerfil',[session?session.token:'',nome,email,senha||'']);},
   async pull(){if(!DEFAULT_GAS_URL)throw new Error('URL do Apps Script indisponível');return gasCall_('apiPull',[session?session.token:'']);},
