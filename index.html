@@ -432,8 +432,8 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = document.getElementById('loginLogo').src;
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
-const APP_VERSAO = 27;
-const BUILD_ID = 'SGD-GITHUB-V27-SEGURANCA-LOGIN';
+const APP_VERSAO = 28;
+const BUILD_ID = 'SGD-GITHUB-V28-LOGIN-MIGRACAO-LEGADA';
 
 // A URL do backend não é mais digitável/editável no app (removido da
 // antiga tela "Sobre" — era a causa de vários "não conecta" quando ficava
@@ -829,7 +829,7 @@ function buscarDadosLogin(){
       const msg = String(err && err.message || '');
       let dica = 'Verifique a implantação /exec do Apps Script e se ela está publicada como "Qualquer pessoa".';
       if(msg.indexOf('Tempo esgotado') !== -1){
-        dica = 'O Apps Script não respondeu. Publique novamente a implantação /exec da versão 27.';
+        dica = 'O Apps Script não respondeu. Publique novamente a implantação /exec da versão 28.';
       }
 
       setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível carregar os dados da planilha. ' + dica);
@@ -3006,7 +3006,7 @@ function repararDriveSeNecessario_(){
   });
 }
 
-/* V27 LOGIN: autenticação exclusivamente no servidor; o carregamento do logotipo/dados públicos não bloqueia o envio do login. */
+/* V28 LOGIN: autenticação exclusivamente no servidor; o carregamento do logotipo/dados públicos não bloqueia o envio do login. */
 /* LOGIN: verificado no servidor (item 11) — a senha nunca é comparada no
    navegador nem fica disponível localmente; só o backend conhece o hash. */
 $('#loginForm').addEventListener('submit', e => {
