@@ -372,6 +372,7 @@ td{padding:12px;border-bottom:1px solid #edf1f7;vertical-align:middle}
   <div class="login-card">
     <img id="loginLogo" alt="Logotipo" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='220'%20height='90'%3E%3Crect%20width='220'%20height='90'%20rx='12'%20fill='%23eef2f7'/%3E%3Crect%20x='88'%20y='16'%20width='44'%20height='56'%20rx='6'%20fill='%231552c2'/%3E%3Crect%20x='96'%20y='28'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='38'%20width='28'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='96'%20y='48'%20width='20'%20height='4'%20rx='2'%20fill='%23fff'/%3E%3C/svg%3E">
     <h1>Gestão de Documentos</h1>
+    <div id="loginStatus" class="login-status hidden"></div>
     <form id="loginForm" autocomplete="off">
       <label class="campo">E-mail institucional
         <input id="loginEmail" type="email" required>
@@ -750,7 +751,7 @@ const Sync = {
   limparExcluidos(){if(!session)return;return gasCall_('apiLimparExcluidos',[session.token]);},
   escanearPendentes(){return chamarAcaoGet_({acao:'escanearPendentes'});},
   verificarOrfaos(){return chamarAcaoGet_({acao:'verificarOrfaos'});},
-  async login(email,senha){return gasCall_('apiLogin',[email,senha]);},
+  async login(email,senha){return postApi_({fn:'apiLogin',args:[email,senha]});},
   async trocarSenha(userId,senhaAtual,senhaNova){return gasCall_('apiTrocarSenha',[session?session.token:'',senhaAtual,senhaNova]);},
   async atualizarPerfil(userId,nome,email,senha){return gasCall_('apiAtualizarPerfil',[session?session.token:'',nome,email,senha||'']);},
   async pull(){if(!DEFAULT_GAS_URL)throw new Error('URL do Apps Script indisponível');return gasCall_('apiPull',[session?session.token:'']);},
@@ -773,22 +774,39 @@ function adotarDados(data){
 }
 /* Busca os dados da planilha para a tela de login (logotipo, empresa, usuários). */
 function buscarDadosLogin(){
+  const st = $('#loginStatus');
+  const setStatus = (html) => { if(st){ st.innerHTML = html; st.className = 'login-status erro'; st.classList.remove('hidden'); } };
+  const limparStatus = () => { if(st){ st.innerHTML = ''; st.classList.add('hidden'); } };
   Sync.ensureDriveRoot();
+  const inicio = Date.now();
   Sync.pull().then(data => {
     if(data && typeof data === 'object'){
       const v = Number(data.__v || 0);
       backendAntigo = v < APP_VERSAO;
       Sync.applyData(data);
-      if(backendAntigo){
-        console.warn('Backend Apps Script desatualizado. Publique a versão 17 da implantação.');
+      if(Number(data.usuarioCount || 0) > 0){
+        limparStatus();
+      } else {
+        setStatus('<i class="fa-solid fa-circle-exclamation"></i> A planilha ainda não tem nenhum usuário cadastrado na aba "Usuarios".');
       }
+      if(backendAntigo) toast('Backend Apps Script desatualizado: publique a NOVA VERSÃO da implantação (versão ' + APP_VERSAO + ').','error');
+    } else {
+      setStatus('<i class="fa-solid fa-circle-exclamation"></i> Resposta inválida da planilha.');
     }
-    aplicarMarca();
-    mostrarLogin();
+    aplicarMarca(); mostrarLogin();
   }).catch((erro) => {
-    console.error('Falha ao consultar o Apps Script:', erro);
-    aplicarMarca();
-    mostrarLogin();
+    // DIAGNÓSTICO: em vez da mensagem genérica, tentamos apontar a causa
+    // mais provável, com base em COMO a chamada falhou.
+    const msg = String(erro && erro.message || '');
+    const demorou = (Date.now() - inicio) > 10000;
+    let dica;
+    if(msg.indexOf('google.script.run') !== -1){
+      dica = 'Verifique a implantação do Apps Script e se a URL do backend está publicada como Aplicativo da Web.';
+    } else {
+      dica = 'Verifique a implantação do Apps Script, as autorizações do projeto e sua conexão com a internet.';
+    }
+    setStatus('<i class="fa-solid fa-circle-exclamation"></i> Não foi possível conectar à planilha. ' + dica);
+    aplicarMarca(); mostrarLogin();
   });
 }
 /* Sincronização periódica com o app logado. */
@@ -2967,8 +2985,9 @@ $('#loginForm').addEventListener('submit', e => {
     } else {
       $('#loginErro').textContent = (res && res.erro) || 'E-mail ou senha inválidos.';
     }
-  }).catch(() => {
-    $('#loginErro').textContent = 'Não foi possível verificar a planilha. Tente novamente.';
+  }).catch((err) => {
+    const msg = String(err && err.message || '');
+    $('#loginErro').textContent = msg || 'Não foi possível verificar a planilha. Tente novamente.';
   }).finally(() => { if(btn) btn.disabled = false; });
 });
 
