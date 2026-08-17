@@ -1270,14 +1270,23 @@ function modalMover(d){
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="confirmar-mover" data-id="' + d.id + '"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
 }
-function modalMoverMultiplo(ids){
+function modalMoverMultiplo(docIds, pastaIds){
+  docIds = docIds || []; pastaIds = pastaIds || [];
   const u = currentUser();
-  const destinos = DB.get('Pastas').filter(p => permsEff(u.id, p).includes('upload'));
+  // ITEM: ao mover pastas em lote, nenhuma pasta selecionada (nem suas
+  // subpastas) pode ser escolhida como destino — senão criaria um laço.
+  let proibidas = new Set();
+  pastaIds.forEach(pid => descendentesDe_(pid).forEach(id => proibidas.add(id)));
+  const destinos = DB.get('Pastas').filter(p => !proibidas.has(p.id) && permsEff(u.id, p).includes('upload'));
   const opts = (ehAdmin(u) ? '<option value="">Raiz</option>' : '') +
     destinos.map(p => '<option value="' + p.id + '">' + esc(nomeCaminho(p)) + '</option>').join('');
-  if(!opts){ toast('Nenhuma pasta de destino com permissão de upload.','error'); return; }
-  openModal('<h3><i class="fa-solid fa-folder-tree"></i> Mover arquivos selecionados</h3>' +
-    '<p class="modal-sub"><b>' + ids.length + ' arquivo(s)</b> selecionado(s) — escolha a pasta de destino. A movimentação também será aplicada no Google Drive.</p>' +
+  if(!opts){ toast('Nenhuma pasta de destino disponível.','error'); return; }
+  const partes = [];
+  if(pastaIds.length) partes.push(pastaIds.length + ' pasta' + (pastaIds.length > 1 ? 's' : ''));
+  if(docIds.length) partes.push(docIds.length + ' arquivo' + (docIds.length > 1 ? 's' : ''));
+  window.__moverMultiTmp = {docIds, pastaIds};
+  openModal('<h3><i class="fa-solid fa-folder-tree"></i> Mover selecionados</h3>' +
+    '<p class="modal-sub"><b>' + partes.join(' e ') + '</b> selecionado(s) — escolha a pasta de destino. A movimentação também será aplicada no Google Drive.</p>' +
     '<label class="campo">Pasta de destino<select id="moverDestMulti">' + opts + '</select></label>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
     '<button class="btn btn-primary" data-action="confirmar-mover-multi"><i class="fa-solid fa-folder-tree"></i> Mover</button></div>');
@@ -1715,9 +1724,10 @@ function renderSelBar(){
   if(!state.selecaoAtiva || !n){ el.innerHTML = ''; el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const temDoc = [...state.selecao].some(k => k.indexOf('doc:') === 0);
+  const temPasta = [...state.selecao].some(k => k.indexOf('pasta:') === 0);
   el.innerHTML = '<div class="sel-bar">' +
     '<span class="sel-count"><i class="fa-solid fa-check-double"></i> ' + n + ' selecionado' + (n>1?'s':'') + '</span>' +
-    (temDoc ? '<button class="btn btn-light" data-action="mover-selecionados"><i class="fa-solid fa-folder-tree"></i> Mover</button>' : '') +
+    ((temDoc || temPasta) ? '<button class="btn btn-light" data-action="mover-selecionados"><i class="fa-solid fa-folder-tree"></i> Mover</button>' : '') +
     '<button class="btn btn-danger" data-action="excluir-selecionados"><i class="fa-solid fa-trash-can"></i> Excluir</button>' +
     '<button class="btn btn-light" data-action="limpar-selecao"><i class="fa-solid fa-xmark"></i> Limpar seleção</button>' +
   '</div>';
@@ -3091,33 +3101,63 @@ document.addEventListener('click', e => {
       break;
     }
     case 'mover-selecionados': {
-      const idsMulti = [...state.selecao].filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
-      if(!idsMulti.length){ toast('Nenhum arquivo selecionado para mover.','info'); break; }
-      modalMoverMultiplo(idsMulti);
+      const keys = [...state.selecao];
+      const docIds = keys.filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
+      const pastaIds = keys.filter(k => k.indexOf('pasta:') === 0).map(k => k.slice(6));
+      if(!docIds.length && !pastaIds.length){ toast('Nada selecionado para mover.','info'); break; }
+      modalMoverMultiplo(docIds, pastaIds);
       break;
     }
     case 'confirmar-mover-multi': {
+      const tmp = window.__moverMultiTmp || {docIds:[], pastaIds:[]};
       const dest = ($('#moverDestMulti') || {}).value;
       const destId = dest === '' ? null : dest;
       const alvo = destId ? pastaPorId(destId) : null;
       if(destId && !permsEff(u.id, alvo).includes('upload')){ toast('Sem permissão de upload na pasta de destino.','error'); break; }
-      const idsMulti = [...state.selecao].filter(k => k.indexOf('doc:') === 0).map(k => k.slice(4));
-      let movidos = 0, semPermissao = 0, jaLa = 0;
-      const docsAtuais = DB.get('Documentos');
-      const atualizados = docsAtuais.map(x => {
-        if(idsMulti.indexOf(x.id) === -1) return x;
-        if(!permsDoc(x).includes('editar')){ semPermissao++; return x; }
-        if((x.pastaId || null) === (destId || null)){ jaLa++; return x; }
-        movidos++;
-        return Object.assign({}, x, {pastaId: destId, movePending: true, atualizadoEm: Date.now()});
-      });
-      DB.set('Documentos', atualizados);
+      // ITEM: pastas selecionadas não podem ir para dentro de si mesmas, de
+      // uma subpasta delas, nem de outra pasta que também está sendo movida
+      // junto (evita laço).
+      let proibidas = new Set();
+      tmp.pastaIds.forEach(pid => descendentesDe_(pid).forEach(id => proibidas.add(id)));
+      if(destId && proibidas.has(destId)){ toast('Não é possível mover uma pasta para dentro dela mesma ou de outra pasta selecionada.','error'); break; }
+
+      let movidosD = 0, semPermD = 0, jaLaD = 0;
+      if(tmp.docIds.length){
+        const docsAtuais = DB.get('Documentos');
+        const atualizados = docsAtuais.map(x => {
+          if(tmp.docIds.indexOf(x.id) === -1) return x;
+          if(!permsDoc(x).includes('editar')){ semPermD++; return x; }
+          if((x.pastaId || null) === (destId || null)){ jaLaD++; return x; }
+          movidosD++;
+          return Object.assign({}, x, {pastaId: destId, movePending: true, atualizadoEm: Date.now()});
+        });
+        DB.set('Documentos', atualizados);
+      }
+      let movidosP = 0, semPermP = 0, jaLaP = 0;
+      if(tmp.pastaIds.length){
+        const perms = permsAtuais();
+        const podeMoverPasta = perms.includes('excluir_pasta');
+        const pastasAtuais = DB.get('Pastas');
+        const atualizadas = pastasAtuais.map(x => {
+          if(tmp.pastaIds.indexOf(x.id) === -1) return x;
+          if(!podeMoverPasta){ semPermP++; return x; }
+          if((x.parentId || null) === (destId || null)){ jaLaP++; return x; }
+          movidosP++;
+          return Object.assign({}, x, {parentId: destId, movePending: true});
+        });
+        DB.set('Pastas', atualizadas);
+      }
+      delete window.__moverMultiTmp;
       fecharModal();
       limparSelecao();
-      let msg = movidos + ' arquivo(s) movido(s) para "' + (alvo ? alvo.nome : 'Raiz') + '".';
-      if(semPermissao) msg += ' ' + semPermissao + ' sem permissão.';
+      const partes = [];
+      if(movidosP) partes.push(movidosP + ' pasta' + (movidosP > 1 ? 's' : ''));
+      if(movidosD) partes.push(movidosD + ' arquivo' + (movidosD > 1 ? 's' : ''));
+      let msg = (partes.length ? partes.join(' e ') + ' movido(s)' : 'Nada movido') + ' para "' + (alvo ? alvo.nome : 'Raiz') + '".';
+      const semPerm = semPermD + semPermP, jaLa = jaLaD + jaLaP;
+      if(semPerm) msg += ' ' + semPerm + ' sem permissão.';
       if(jaLa) msg += ' ' + jaLa + ' já estavam nesta pasta.';
-      toast(msg + (movidos ? ' Sincronizando no Drive…' : ''));
+      toast(msg + ((movidosD || movidosP) ? ' Sincronizando no Drive…' : ''));
       renderDashboard();
       break;
     }
