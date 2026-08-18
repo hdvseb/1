@@ -1,870 +1,113 @@
-var VERSAO = 33;
-var SPREADSHEET_ID = '1B5rBpvv2U4cPqgsVMDpXxfqWKAbiHAZ9hJq_kkUCzwk';
-var FOLHAS = ["Usuarios","Pastas","Permissoes","Documentos","Empresa","Excluidos"];
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="google-site-verification" content="yQigN6Y2hMkyqXraxrlb9k2KJJs6It0Sq0oZQw8xQrM"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Vagas Click</title>
 
-function folha_(nome){
-  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  var sh = ss.getSheetByName(nome);
-  if (!sh) sh = ss.insertSheet(nome);
-  if (nome === "Excluidos" && sh.getLastRow() === 0){
-    sh.getRange(1,1,1,4).setValues([["data_hora","usuario","tipo","nome"]]);
-  }
-  return sh;
-}
+    <link rel="preconnect" href="https://script.google.com" crossorigin="anonymous"/>
+    <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin="anonymous"/>
 
-function pastaDriveRaiz_(){
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty("DRIVE_FOLDER");
-  var folder = null;
-  try { folder = id ? DriveApp.getFolderById(id) : null; } catch(e){}
-
-  // V19 FIX DEFINITIVO: versões anteriores assumiam que a raiz física se
-  // chamava sempre "SGD_Arquivos". A estrutura já existente do usuário pode
-  // estar em uma pasta legada chamada "Documentos" (como no Drive original),
-  // ou o projeto pode ter guardado no Script Properties uma pasta vazia criada
-  // por uma versão anterior. Antes de criar qualquer pasta nova, descobrimos
-  // a raiz com conteúdo real e gravamos somente depois de escolher a correta.
-  var candidatos = [];
-  var nomes = ["SGD_Arquivos", "Documentos"];
-  var vistos = {};
-
-  function adicionarCandidato_(c, nomeOrigem){
-    if(!c) return;
-    var cid = c.getId();
-    if(vistos[cid]) return;
-    vistos[cid] = true;
-    candidatos.push({folder:c,nome:nomeOrigem || c.getName()});
-  }
-
-  adicionarCandidato_(folder, "DRIVE_FOLDER");
-  for(var ni=0;ni<nomes.length;ni++){
-    try{
-      var it=DriveApp.getFoldersByName(nomes[ni]);
-      while(it.hasNext()) adicionarCandidato_(it.next(), nomes[ni]);
-    }catch(e1){}
-  }
-
-  function pontuar_(c){
-    var score=0, filas=[{f:c,d:0}], vistosF={};
-    while(filas.length && score<5000){
-      var item=filas.shift(), f=item.f, d=item.d, fid=f.getId();
-      if(vistosF[fid]) continue;
-      vistosF[fid]=true;
-      // Dá peso maior a conteúdo real; subpastas também contam para detectar
-      // uma árvore que não possui arquivos diretamente na raiz.
-      try{
-        var fs=f.getFiles();
-        while(fs.hasNext() && score<5000){fs.next();score+=10;}
-      }catch(e2){}
-      try{
-        var subs=f.getFolders();
-        while(subs.hasNext() && score<5000){
-          var sf=subs.next(); score+=2;
-          if(d<25) filas.push({f:sf,d:d+1});
-        }
-      }catch(e3){}
-    }
-    return score;
-  }
-
-  // Primeiro: se a pasta registrada contém a árvore real, mantenha-a sem
-  // trocar para uma pasta de mesmo nome que por acaso tenha mais arquivos.
-  // Segundo: se ela estiver vazia/inválida, procure entre as pastas conhecidas
-  // por uma árvore com conteúdo. Isso cobre a raiz legada "Documentos".
-  var scoreFolder = folder ? pontuar_(folder) : 0;
-  var melhor = (folder && scoreFolder>0) ? folder : null;
-  var melhorScore = (folder && scoreFolder>0) ? scoreFolder : -1;
-  for(var ci=0;ci<candidatos.length;ci++){
-    var cand=candidatos[ci].folder;
-    if(folder && cand.getId()===folder.getId() && scoreFolder>0) continue;
-    var score=pontuar_(cand);
-    if(score>melhorScore){ melhor=cand; melhorScore=score; }
-  }
-
-  if(!melhor){
-    // Só cria uma nova raiz quando não existe nenhuma candidata utilizável.
-    melhor=DriveApp.createFolder("SGD_Arquivos");
-  }
-
-  props.setProperty("DRIVE_FOLDER", melhor.getId());
-  return melhor;
-}
-
-function lerFolha_(nome){
-  var sh = folha_(nome);
-  var last = sh.getLastRow();
-  var out = [];
-  var inicio = (nome === "Excluidos") ? 2 : 1; // linha 1 é cabeçalho fixo em Excluidos
-  if (last >= inicio){
-    var vals = sh.getRange(inicio,1,last-inicio+1,1).getValues();
-    for (var i=0;i<vals.length;i++){
-      if (!vals[i][0]) continue;
-      try { out.push({row:i+inicio, obj: JSON.parse(vals[i][0])}); } catch(e){}
-    }
-  }
-  return out;
-}
-
-function gravarLinha_(nome, row, obj){
-  folha_(nome).getRange(row,1).setValue(JSON.stringify(obj));
-}
-
-// ---------- AUTENTICAÇÃO E AUTORIZAÇÃO NO SERVIDOR ----------
-var SESSAO_ABSOLUTA_MS = 8 * 60 * 60 * 1000;
-var SESSAO_INATIVA_MS  = 30 * 60 * 1000;
-var MAX_LOGIN_FALHAS = 10;
-var MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-var FORMATOS_UPLOAD_SEGURANCA = [
-  "pdf","txt","md","log","json","csv","xml","doc","docx","odt",
-  "xls","xlsx","ods","ppt","pptx","mp4","webm","mov","m4v",
-  "mp3","wav","ogg","m4a","png","jpg","jpeg","gif","webp","svg",
-  "bmp","zip","rar","7z"
-];
-
-function normalizarEmail_(email){ return String(email || "").trim().toLowerCase(); }
-function buscarUsuarioPorEmail_(email){
-  var alvo=normalizarEmail_(email), rows=lerFolha_("Usuarios");
-  if(!alvo) return null;
-  for(var i=0;i<rows.length;i++) if(normalizarEmail_(rows[i].obj.email)===alvo) return rows[i].obj;
-  return null;
-}
-function buscarUsuario_(userId){
-  if(!userId) return null;
-  var rows=lerFolha_("Usuarios");
-  for(var i=0;i<rows.length;i++) if(rows[i].obj.id===userId) return rows[i].obj;
-  return null;
-}
-function acharLinhaUsuario_(userId){
-  if(!userId) return null;
-  var rows=lerFolha_("Usuarios");
-  for(var i=0;i<rows.length;i++) if(rows[i].obj.id===userId) return rows[i];
-  return null;
-}
-function ehAdmin_(u){ return !!u && (u.papel==="master" || u.papel==="admin"); }
-function ehMaster_(u){ return !!u && u.papel==="master"; }
-function usuarioTemPermissao_(u,chave){
-  if(!u) return false;
-  if(ehAdmin_(u)) return true;
-  var perms=Array.isArray(u.perms)&&u.perms.length?u.perms:["visualizar"];
-  return perms.indexOf(chave)!==-1;
-}
-function compararSeguro_(a,b){
-  a=String(a||"").trim(); b=String(b||"").trim();
-  if(/^[0-9a-f]+$/i.test(a) && /^[0-9a-f]+$/i.test(b)){a=a.toLowerCase();b=b.toLowerCase();}
-  var n=Math.max(a.length,b.length), diff=a.length^b.length;
-  for(var i=0;i<n;i++) diff |= (a.charCodeAt(i%Math.max(1,a.length))||0) ^ (b.charCodeAt(i%Math.max(1,b.length))||0);
-  return diff===0;
-}
-function hashToken_(token){
-  var bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(token||"")), hex="";
-  for(var i=0;i<bytes.length;i++){var v=(bytes[i]+256)%256,h=v.toString(16);hex+=h.length===1?"0"+h:h;}
-  return hex;
-}
-function criarSessao_(userId){
-  var token=Utilities.getUuid()+"."+Utilities.getUuid(), agora=Date.now();
-  PropertiesService.getScriptProperties().setProperty("SESSAO_"+hashToken_(token),JSON.stringify({
-    userId:userId,criadoEm:agora,ultimoUso:agora,expiraEm:agora+SESSAO_ABSOLUTA_MS
-  }));
-  return token;
-}
-function validarSessao_(token){
-  if(!token) return null;
-  var key="SESSAO_"+hashToken_(token), props=PropertiesService.getScriptProperties(), raw=props.getProperty(key);
-  if(!raw) return null;
-  var s;
-  try{s=JSON.parse(raw);}catch(e){props.deleteProperty(key);return null;}
-  var agora=Date.now();
-  if(!s||!s.userId||agora>Number(s.expiraEm||0)||agora-Number(s.ultimoUso||0)>SESSAO_INATIVA_MS){
-    props.deleteProperty(key);return null;
-  }
-  s.ultimoUso=agora;props.setProperty(key,JSON.stringify(s));
-  return buscarUsuario_(s.userId);
-}
-function encerrarSessao_(token){
-  if(token) PropertiesService.getScriptProperties().deleteProperty("SESSAO_"+hashToken_(token));
-}
-function semCamposSenha_(u){
-  var copia=JSON.parse(JSON.stringify(u||{}));
-  delete copia.senha;delete copia.senhaHash;delete copia.senhaSalt;
-  return copia;
-}
-function gerarSalt_(){return Utilities.getUuid();}
-function hashSenha_(senha,salt){
-  var bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(senha)+"::"+String(salt)),hex="";
-  for(var i=0;i<bytes.length;i++){var v=(bytes[i]+256)%256,h=v.toString(16);hex+=h.length===1?"0"+h:h;}
-  return hex;
-}
-function validarSenhaNova_(senha){return typeof senha==="string"&&senha.length>=10&&senha.length<=256;}
-function chaveFalhaLogin_(email){return "LOGIN_FAIL_V33_"+hashToken_(normalizarEmail_(email));}
-function loginBloqueado_(email){return Number(CacheService.getScriptCache().get(chaveFalhaLogin_(email))||0)>=MAX_LOGIN_FALHAS;}
-function registrarFalhaLogin_(email){
-  var c=CacheService.getScriptCache(),k=chaveFalhaLogin_(email),n=Number(c.get(k)||0)+1;c.put(k,String(n),600);
-}
-function limparFalhasLogin_(email){CacheService.getScriptCache().remove(chaveFalhaLogin_(email));}
-function prepararLinhasUsuarios_(rows){
-  return (rows||[]).map(function(r){
-    if(!r||typeof r!=="object") return r;
-    var copia=Object.assign({},r);
-    if(typeof copia.senha==="string"&&copia.senha){
-      if(!validarSenhaNova_(copia.senha)) throw new Error("A nova senha deve ter entre 10 e 256 caracteres.");
-      var salt=gerarSalt_();copia.senhaSalt=salt;copia.senhaHash=hashSenha_(copia.senha,salt);
-    }
-    delete copia.senha;return copia;
-  });
-}
-
-function permsGlobaisServidor_(u){
-  return (u&&Array.isArray(u.perms)&&u.perms.length)?u.perms.slice():["visualizar"];
-}
-function mapaPorId_(rows){
-  var m={};(rows||[]).forEach(function(r){if(r&&r.obj&&r.obj.id)m[r.obj.id]=r.obj;});return m;
-}
-function ownerIsAdminServidor_(p,usuariosMap){
-  var o=p&&p.criadaPor?usuariosMap[p.criadaPor]:null;return !o||ehAdmin_(o);
-}
-function permsEfetivasServidor_(u,pastaId,pastasMap,permsRows,usuariosMap){
-  var ALL=["visualizar","editar","excluir","imprimir","upload","download","criar_pasta","excluir_pasta"];
-  if(!u) return [];
-  if(!pastaId) return permsGlobaisServidor_(u);
-  if(ehAdmin_(u)) return ALL;
-  var global=permsGlobaisServidor_(u),cur=pastasMap[pastaId],grant=null,blocked=false,guard={};
-  while(cur){
-    if(guard[cur.id]){blocked=true;break;} guard[cur.id]=true;
-    var e=null;
-    (permsRows||[]).some(function(r){if(r.pastaId===cur.id&&r.userId===u.id){e=r;return true;}return false;});
-    if(e){grant=Array.isArray(e.perms)?e.perms.slice():[];break;}
-    if(cur.criadaPor===u.id) break;
-    if(!ownerIsAdminServidor_(cur,usuariosMap)){blocked=true;break;}
-    cur=cur.parentId?pastasMap[cur.parentId]:null;
-  }
-  if(blocked) return [];
-  if(grant==="ALL") return ALL;
-  if(grant) return grant.filter(function(k){return global.indexOf(k)!==-1;});
-  return global.slice();
-}
-function permsDocServidor_(u,d,ctx){
-  if(!u||!d) return [];
-  if(ehAdmin_(u)) return ["visualizar","editar","excluir","imprimir","upload","download","criar_pasta","excluir_pasta"];
-  return d.pastaId?permsEfetivasServidor_(u,d.pastaId,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap):permsGlobaisServidor_(u);
-}
-function criarContextoSeguranca_(){
-  var pastasRows=lerFolha_("Pastas"),permsRows=lerFolha_("Permissoes"),usuariosRows=lerFolha_("Usuarios");
-  return {pastasRows:pastasRows,permsRows:permsRows.map(function(x){return x.obj;}),usuariosMap:mapaPorId_(usuariosRows),pastasMap:mapaPorId_(pastasRows)};
-}
-
-function logoParaCliente_(logo){
-  logo=String(logo||'').trim();
-  if(!logo) return '';
-  if(/^data:image\//i.test(logo)) return logo;
-
-  var id='';
-  var m=logo.match(/\/d\/([A-Za-z0-9_-]{10,})/);
-  if(m) id=m[1];
-  if(!id){
-    m=logo.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
-    if(m) id=m[1];
-  }
-
-  if(id){
-    try{
-      var blob=DriveApp.getFileById(id).getBlob();
-      var mime=String(blob.getContentType()||'image/png');
-      if(/^image\//i.test(mime)){
-        return 'data:'+mime+';base64,'+Utilities.base64Encode(blob.getBytes());
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #f0f2f5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
       }
-    }catch(e){}
-  }
-  return logo;
-}
 
-function empresaParaCliente_(){
-  return lerFolha_("Empresa").map(function(r){
-    var obj=JSON.parse(JSON.stringify(r.obj||{}));
-    obj.logo=logoParaCliente_(obj.logo);
-    return obj;
-  });
-}
-
-function dadosParaUsuario_(u){
-  var out={__v:VERSAO,ok:true,authOk:true},ctx=criarContextoSeguranca_();
-  out.Empresa=empresaParaCliente_();
-  var pastas=lerFolha_("Pastas").map(function(r){return r.obj;}),docs=lerFolha_("Documentos").map(function(r){return r.obj;});
-  if(ehAdmin_(u)){
-    out.Usuarios=lerFolha_("Usuarios").map(function(r){return semCamposSenha_(r.obj);});
-    out.Permissoes=ctx.permsRows;out.Pastas=pastas;out.Documentos=docs;
-    out.Excluidos=lerFolha_("Excluidos").map(function(r){return r.obj;});
-  }else{
-    out.Usuarios=[semCamposSenha_(u)];
-    out.Permissoes=ctx.permsRows.filter(function(p){return p.userId===u.id;});
-    out.Pastas=pastas.filter(function(p){return permsEfetivasServidor_(u,p.id,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap).indexOf("visualizar")!==-1;});
-    out.Documentos=docs.filter(function(d){return permsDocServidor_(u,d,ctx).indexOf("visualizar")!==-1;});
-    out.Excluidos=[];
-  }
-  return out;
-}
-function dadosPublicos_(){
-  return {__v:VERSAO,ok:true,authOk:false,Empresa:empresaParaCliente_(),usuarioCount:lerFolha_("Usuarios").length};
-}
-
-function cloneObj_(o){return JSON.parse(JSON.stringify(o||{}));}
-function mapaObjetos_(rows){var m={};(rows||[]).forEach(function(r){if(r&&r.id)m[r.id]=r;});return m;}
-function limparCamposControlados_(novo,antigo,folha,u){
-  var x=cloneObj_(novo);
-  if(antigo){
-    x.id=antigo.id;x.criadaPor=antigo.criadaPor;x.criadoEm=antigo.criadoEm;
-    if(folha==="Documentos"){x.driveId=antigo.driveId;x.driveUrl=antigo.driveUrl;}
-    if(folha==="Pastas") x.driveFolderId=antigo.driveFolderId;
-  }else if(folha==="Documentos"){
-    x.criadaPor=u.id;x.criadoEm=x.criadoEm||Date.now();delete x.driveId;delete x.driveUrl;
-  }else if(folha==="Pastas"){
-    x.criadaPor=u.id;x.criadoEm=x.criadoEm||Date.now();delete x.driveFolderId;
-  }
-  return x;
-}
-function autorizadoPushDocumento_(u,antigo,novo,ctx){
-  if(!antigo){
-    var perms=novo.pastaId?permsEfetivasServidor_(u,novo.pastaId,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap):permsGlobaisServidor_(u);
-    return perms.indexOf("upload")!==-1;
-  }
-  if(!novo) return permsDocServidor_(u,antigo,ctx).indexOf("excluir")!==-1;
-  if(antigo.pastaId!==novo.pastaId){
-    var oldPerm=permsDocServidor_(u,antigo,ctx),newPerm=novo.pastaId?permsEfetivasServidor_(u,novo.pastaId,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap):permsGlobaisServidor_(u);
-    return oldPerm.indexOf("editar")!==-1&&newPerm.indexOf("upload")!==-1;
-  }
-  var p=permsDocServidor_(u,antigo,ctx);
-  return p.indexOf("editar")!==-1||p.indexOf("upload")!==-1;
-}
-function autorizadoPushPasta_(u,antigo,novo,ctx){
-  if(!antigo){
-    var perms=novo.parentId?permsEfetivasServidor_(u,novo.parentId,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap):permsGlobaisServidor_(u);
-    return perms.indexOf("criar_pasta")!==-1;
-  }
-  if(!novo) return permsEfetivasServidor_(u,antigo.id,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap).indexOf("excluir_pasta")!==-1;
-  var cur=permsEfetivasServidor_(u,antigo.id,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap);
-  if(antigo.parentId!==novo.parentId){
-    var dest=novo.parentId?permsEfetivasServidor_(u,novo.parentId,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap):permsGlobaisServidor_(u);
-    return cur.indexOf("excluir_pasta")!==-1&&dest.indexOf("upload")!==-1;
-  }
-  return cur.indexOf("editar")!==-1||cur.indexOf("excluir_pasta")!==-1;
-}
-function prepararPushSeguro_(folha,incoming,u){
-  var existing=lerFolha_(folha).map(function(r){return r.obj;}),old=mapaObjetos_(existing),inc=mapaObjetos_(incoming),ctx=criarContextoSeguranca_();
-  if(ehAdmin_(u)){
-    if(folha==="Usuarios") incoming=prepararLinhasUsuarios_(incoming);
-    var merged=incoming.map(function(r){return r&&r.id&&old[r.id]?Object.assign({},old[r.id],r):r;});
-    if(folha==="Usuarios"&&!ehMaster_(u)){
-      var protectedMasters={};
-      existing.forEach(function(a){if(ehMaster_(a))protectedMasters[a.id]=a;});
-      merged=merged.filter(function(r){return !protectedMasters[r.id];});
-      Object.keys(protectedMasters).forEach(function(id){if(!inc[id])merged.push(protectedMasters[id]);});
-      merged.forEach(function(r){var a=old[r.id];if(r.papel==="master")r.papel=a&&a.papel?a.papel:"admin";});
-    }
-    return merged;
-  }
-  if(["Usuarios","Permissoes","Empresa","Excluidos"].indexOf(folha)!==-1) throw new Error("sem permissão");
-  var result=[];
-  existing.forEach(function(a){
-    if(inc[a.id]) return;
-    var ok=folha==="Documentos"?autorizadoPushDocumento_(u,a,null,ctx):autorizadoPushPasta_(u,a,null,ctx);
-    if(!ok) result.push(a);
-  });
-  incoming.forEach(function(n){
-    if(!n||!n.id)return;
-    var a=old[n.id],ok=folha==="Documentos"?autorizadoPushDocumento_(u,a,n,ctx):autorizadoPushPasta_(u,a,n,ctx);
-    if(ok) result.push(limparCamposControlados_(n,a,folha,u)); else if(a) result.push(a);
-  });
-  var uniq={};return result.filter(function(r){if(!r||!r.id||uniq[r.id])return false;uniq[r.id]=true;return true;});
-}
-
-// ---------- API INTERNA ----------
-// V29: preserva o fluxo V28 e reinicia apenas o namespace do bloqueio de tentativas
-// para que bloqueios temporários herdados de versões anteriores não impeçam a primeira autenticação.
-function migrarSenhaLegadaNoLogin_(u){
-  // Compatibilidade com contas criadas antes do esquema hash+salt.
-  // A senha legada é lida somente no backend, convertida imediatamente para
-  // SHA-256(senha + "::" + salt), gravada e removida do registro.
-  // Não devolvemos a senha nem o hash ao cliente.
-  if(!u) return null;
-  if(u.senhaHash && u.senhaSalt) return u;
-  if(typeof u.senha !== "string" || !u.senha) return null;
-  var linha=acharLinhaUsuario_(u.id);
-  if(!linha || !linha.obj) return null;
-  var obj=linha.obj;
-  var salt=gerarSalt_();
-  obj.senhaSalt=salt;
-  obj.senhaHash=hashSenha_(obj.senha,salt);
-  delete obj.senha;
-  gravarLinha_("Usuarios",linha.row,obj);
-  return obj;
-}
-
-function hashSenhaSemSalt_(senha){
-  var bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(senha)),hex="";
-  for(var i=0;i<bytes.length;i++){var v=(bytes[i]+256)%256,h=v.toString(16);hex+=h.length===1?"0"+h:h;}
-  return hex;
-}
-function apiObterSalt(email){
-  email=normalizarEmail_(email);
-  if(!email||email.length>254||email.indexOf("@")==-1) return {ok:false};
-  var u=buscarUsuarioPorEmail_(email);
-  // V33: primeiro mantém a migração automática das contas antigas em texto.
-  if(u && (!u.senhaSalt || !u.senhaHash)) u=migrarSenhaLegadaNoLogin_(u);
-  if(!u||!u.senhaHash) return {ok:false};
-  // Compatibilidade: o cliente pode calcular os dois verificadores sem jamais
-  // enviar a senha em texto. O servidor decide qual formato está armazenado.
-  if(u.senhaSalt) return {ok:true,modo:"salted",salt:String(u.senhaSalt),compatUnsalted:true};
-  if(/^[0-9a-f]{64}$/i.test(String(u.senhaHash))) return {ok:true,modo:"unsalted"};
-  return {ok:false};
-}
-function apiLogin(email,credenciais){
-  email=normalizarEmail_(email);
-  var c=credenciais||{};
-  var salted=String(c.salted||"").toLowerCase();
-  var unsalted=String(c.unsalted||"").toLowerCase();
-  if(!email||email.length>254||email.indexOf("@")==-1||
-     (salted && !/^[0-9a-f]{64}$/.test(salted)) ||
-     (unsalted && !/^[0-9a-f]{64}$/.test(unsalted)) || (!salted&&!unsalted)){
-    return {ok:false,erro:"E-mail ou senha inválidos."};
-  }
-  var u=buscarUsuarioPorEmail_(email);
-  if(!u||!u.senhaHash){
-    registrarFalhaLogin_(email);
-    return {ok:false,erro:"E-mail ou senha inválidos."};
-  }
-  var armazenado=String(u.senhaHash).toLowerCase(),valida=false;
-  if(u.senhaSalt && salted) valida=compararSeguro_(salted,armazenado);
-  // Compatibilidade com contas cujo hash foi gravado sem salt por versões
-  // anteriores. Isso também cobre registros que possuem senhaSalt, mas cujo
-  // senhaHash legado não foi recalculado.
-  if(!valida && unsalted) valida=compararSeguro_(unsalted,armazenado);
-  if(!valida){
-    registrarFalhaLogin_(email);
-    return {ok:false,erro:"E-mail ou senha inválidos."};
-  }
-  limparFalhasLogin_(email);
-  return {ok:true,usuario:semCamposSenha_(u),token:criarSessao_(u.id)};
-}
-function apiLogout(token){encerrarSessao_(token);return {ok:true};}
-function apiPull(token){var u=validarSessao_(token);return u?dadosParaUsuario_(u):(token?{ok:false,authOk:false,erro:"sessao_expirada"}:dadosPublicos_());}
-function apiAction(params){
-  params=params||{};var u=validarSessao_(params.token);if(!u)return {ok:false,authOk:false,erro:"sessao_expirada"};
-  if(params.acao==="repararDrive"||params.acao==="escanearPendentes"||params.acao==="verificarOrfaos"){
-    if(!ehAdmin_(u))return {ok:false,erro:"apenas administradores"};
-    if(params.acao==="repararDrive") return repararDriveParaPlanilha_(u);
-    return Object.assign({ok:true},params.acao==="escanearPendentes"?escanearPendentes_():verificarOrfaos_());
-  }
-  return {ok:false,erro:"ação inválida"};
-}
-function apiTrocarSenha(token,senhaAtual,novaSenha){
-  var u=validarSessao_(token);if(!u)return {ok:false,erro:"sessao_expirada"};
-  if(!validarSenhaNova_(novaSenha))return {ok:false,erro:"A nova senha deve ter entre 10 e 256 caracteres."};
-  if(!u.senhaHash||!compararSeguro_(hashSenha_(senhaAtual,u.senhaSalt),u.senhaHash))return {ok:false,erro:"Senha atual incorreta."};
-  var linha=acharLinhaUsuario_(u.id);if(!linha)return {ok:false,erro:"usuário não encontrado"};
-  var salt=gerarSalt_();linha.obj.senhaSalt=salt;linha.obj.senhaHash=hashSenha_(novaSenha,salt);delete linha.obj.senha;gravarLinha_("Usuarios",linha.row,linha.obj);
-  return {ok:true,usuario:semCamposSenha_(linha.obj)};
-}
-function apiAtualizarPerfil(token,nome,email,novaSenha){
-  var u=validarSessao_(token);if(!u)return {ok:false,erro:"sessao_expirada"};
-  nome=String(nome||"").trim();email=normalizarEmail_(email);
-  if(!nome||email.indexOf("@")===-1)return {ok:false,erro:"nome/e-mail inválidos"};
-  var linhas=lerFolha_("Usuarios");
-  for(var i=0;i<linhas.length;i++)if(linhas[i].obj.id!==u.id&&normalizarEmail_(linhas[i].obj.email)===email)return {ok:false,erro:"este e-mail já está cadastrado"};
-  if(novaSenha&&!validarSenhaNova_(novaSenha))return {ok:false,erro:"A nova senha deve ter entre 10 e 256 caracteres."};
-  var linha=acharLinhaUsuario_(u.id);if(!linha)return {ok:false,erro:"usuário não encontrado"};
-  linha.obj.nome=nome;linha.obj.email=email;
-  if(novaSenha){var salt=gerarSalt_();linha.obj.senhaSalt=salt;linha.obj.senhaHash=hashSenha_(novaSenha,salt);}
-  delete linha.obj.senha;gravarLinha_("Usuarios",linha.row,linha.obj);
-  return {ok:true,usuario:semCamposSenha_(linha.obj)};
-}
-function apiPush(body){
-  body=body||{};var u=validarSessao_(body.token);if(!u)return {ok:false,authOk:false,erro:"sessao_expirada"};
-  if(!body.folha||FOLHAS.indexOf(body.folha)===-1||body.folha==="Excluidos")return {ok:false,erro:"folha inválida"};
-  var lock=LockService.getScriptLock();lock.waitLock(30000);
-  try{
-    var rows=prepararPushSeguro_(body.folha,Array.isArray(body.rows)?body.rows:[],u);
-    if(body.folha==="Usuarios")rows=prepararLinhasUsuarios_(rows);
-    var sh=folha_(body.folha);sh.clearContents();
-    if(rows.length)sh.getRange(1,1,rows.length,1).setValues(rows.map(function(r){return [JSON.stringify(r)];}));
-    if(body.folha==="Pastas"){
-      var cache={},changed=false;rows=rows.map(function(r){var nr=processarPasta_(r,cache);if(nr!==r)changed=true;return nr;});
-      rows.forEach(function(r){try{ensureDriveFolder_(r.id,cache);}catch(e){}});
-      if(changed){sh.clearContents();sh.getRange(1,1,rows.length,1).setValues(rows.map(function(r){return [JSON.stringify(r)];}));}
-    }else if(body.folha==="Documentos"){
-      var cache2={},changed2=false;rows=rows.map(function(r){var nr=processarDoc_(r,cache2);if(nr!==r)changed2=true;return nr;});
-      if(changed2){sh.clearContents();sh.getRange(1,1,rows.length,1).setValues(rows.map(function(r){return [JSON.stringify(r)];}));}
-    }
-    return {ok:true};
-  }finally{lock.releaseLock();}
-}
-function apiEnsureRoot(token){var u=validarSessao_(token);if(!u)return {ok:false,erro:"sessao_expirada"};pastaDriveRaiz_();return {ok:true};}
-function buscarPorIdFolha_(folha,id){var rows=lerFolha_(folha);for(var i=0;i<rows.length;i++)if(rows[i].obj.id===id)return rows[i];return null;}
-function apiExcluirDrive(token,tipo,registroId){
-  var u=validarSessao_(token);if(!u)return {ok:false,erro:"sessao_expirada"};
-  var reg=tipo==="pasta"?buscarPorIdFolha_("Pastas",registroId):tipo==="arquivo"?buscarPorIdFolha_("Documentos",registroId):null;
-  if(!reg)return {ok:false,erro:"registro não encontrado"};
-  var ctx=criarContextoSeguranca_(),obj=reg.obj,permitido=ehAdmin_(u);
-  if(!permitido)permitido=tipo==="pasta"?permsEfetivasServidor_(u,obj.id,ctx.pastasMap,ctx.permsRows,ctx.usuariosMap).indexOf("excluir_pasta")!==-1:permsDocServidor_(u,obj,ctx).indexOf("excluir")!==-1;
-  if(!permitido)return {ok:false,erro:"sem permissão para excluir"};
-  var driveId=tipo==="pasta"?obj.driveFolderId:obj.driveId;if(!driveId)return {ok:true};
-  var lock=LockService.getScriptLock();lock.waitLock(30000);
-  try{
-    if(tipo==="pasta")DriveApp.getFolderById(driveId).setTrashed(true);else DriveApp.getFileById(driveId).setTrashed(true);
-    registrarExclusao_(u.nome,tipo,obj.nome||obj.titulo||driveId);return {ok:true};
-  }catch(e){return {ok:false,erro:String(e&&e.message||e)};}finally{lock.releaseLock();}
-}
-function apiUploadArquivo(token,payload){
-  var u=validarSessao_(token);if(!u)return {ok:false,erro:"sessao_expirada"};payload=payload||{};
-  var doc=buscarPorIdFolha_("Documentos",String(payload.docId||""));if(!doc)return {ok:false,erro:"documento não encontrado"};
-  var obj=doc.obj,ctx=criarContextoSeguranca_(),perms=permsDocServidor_(u,obj,ctx);
-  if(!ehAdmin_(u)&&perms.indexOf("upload")===-1)return {ok:false,erro:"sem permissão de upload"};
-  var dataUrl=String(payload.arquivo||""),m=dataUrl.match(/^data:([^;,]+);base64,([\s\S]*)$/);
-  if(!m)return {ok:false,erro:"arquivo inválido"};
-  var ext=String(payload.ext||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-  var emp=lerFolha_("Empresa").map(function(r){return r.obj;})[0]||{},permitidos=(Array.isArray(emp.formats)&&emp.formats.length?emp.formats:FORMATOS_UPLOAD_SEGURANCA).map(function(x){return String(x).toLowerCase().replace(/^\./,"");});
-  if(permitidos.indexOf(ext)===-1)return {ok:false,erro:"formato de arquivo não permitido"};
-  var bytes;try{bytes=Utilities.base64Decode(m[2]);}catch(e){return {ok:false,erro:"base64 inválido"};}
-  if(bytes.length>MAX_UPLOAD_BYTES)return {ok:false,erro:"arquivo excede o limite de 25 MiB"};
-  var folder=ensureDriveFolder_(obj.pastaId,{}),nome=sanitizarNomeArquivo_(String(payload.titulo||obj.titulo||"arquivo"),ext);
-  try{
-    var file=folder.createFile(Utilities.newBlob(bytes,m[1],nome));
-    try{file.setSharing(DriveApp.Access.PRIVATE,DriveApp.Permission.NONE);}catch(eShare){Logger.log("Falha ao restringir compartilhamento: "+eShare);}
-    obj.driveId=file.getId();obj.driveUrl=file.getUrl();obj.arquivo="";obj.erroUpload="";obj.tamanho=bytes.length;obj.atualizadoEm=Date.now();
-    gravarLinha_("Documentos",doc.row,obj);return {ok:true,driveId:obj.driveId,driveUrl:obj.driveUrl};
-  }catch(e2){obj.erroUpload=String(e2&&e2.message||e2);gravarLinha_("Documentos",doc.row,obj);return {ok:false,erro:obj.erroUpload};}
-}
-function sanitizarNomeArquivo_(titulo,ext){
-  var base=String(titulo||"arquivo").replace(/[\\/:*?"<>|\u0000-\u001F]/g,"_").trim().slice(0,180)||"arquivo";return base+"."+ext;
-}
-function apiLimparExcluidos(token){
-  var u=validarSessao_(token);if(!u||!ehAdmin_(u))return {ok:false,erro:"apenas administradores"};
-  var sh=folha_("Excluidos");if(sh.getLastRow()>1)sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).clearContent();return {ok:true};
-}
-
-function registrarExclusao_(usuarioNome, tipo, nome){
-  try{
-    var sh = folha_("Excluidos");
-    sh.appendRow([JSON.stringify({
-      data_hora: new Date().toISOString(),
-      usuario: usuarioNome || "desconhecido",
-      tipo: tipo,
-      nome: nome || ""
-    })]);
-  }catch(e){}
-}
-
-// ITEM: pasta pode ser movida para dentro de outra (mudar parentId) — igual
-// ao que já existia para arquivo (movePending + driveId), mas para pasta
-// (movePending + driveFolderId): move a pasta física no Drive para dentro
-// da pasta física do novo pai.
-function processarPasta_(r, cache){
-  var out = JSON.parse(JSON.stringify(r));
-  if (!out.movePending || !out.driveFolderId) return r;
-  try {
-    var folder = DriveApp.getFolderById(out.driveFolderId);
-    var target = ensureDriveFolder_(out.parentId, cache);
-    folder.moveTo(target);
-  } catch(e) {
-    out.erroUpload = String(e && e.message || e);
-  }
-  out.movePending = false;
-  return out;
-}
-
-function ensureDriveFolder_(pastaId, cache){
-  if (!pastaId) return pastaDriveRaiz_();
-  if (cache[pastaId]) return cache[pastaId];
-  var rows = lerFolha_("Pastas");
-  var found = null;
-  for (var i=0;i<rows.length;i++){ if (rows[i].obj.id === pastaId){ found = rows[i]; break; } }
-  if (!found) return pastaDriveRaiz_();
-  var obj = found.obj;
-  if (obj.driveFolderId){
-    try { cache[pastaId] = DriveApp.getFolderById(obj.driveFolderId); return cache[pastaId]; } catch(e){}
-  }
-  var parent = ensureDriveFolder_(obj.parentId, cache);
-  var it = parent.getFoldersByName(obj.nome);
-  var folder = it.hasNext() ? it.next() : parent.createFolder(obj.nome);
-  obj.driveFolderId = folder.getId();
-  gravarLinha_("Pastas", found.row, obj);
-  cache[pastaId] = folder;
-  return folder;
-}
-
-// CORREÇÃO (itens 1 e 4): antes, "out.arquivo" era zerado incondicionalmente,
-// mesmo quando a criação do arquivo no Drive falhava (o try/catch engolia o
-// erro). Isso causava (a) documentos ficando em branco quando createFile
-// falhava, e (b) duplicação no Drive quando o cliente reenviava a mesma linha
-// (ainda com o base64 e sem driveId) antes de ter recebido o driveId de volta
-// — o servidor tentava criar o arquivo de novo. Agora só limpamos "arquivo"
-// quando a gravação no Drive teve sucesso, e sinalizamos erro explícito
-// quando falha, mantendo o conteúdo para tentar de novo.
-// OBS (item 13): esta função só é usada hoje pelo caminho de fallback (uma
-// linha de "Documentos" que ainda tenha "arquivo" preenchido, cenário raro
-// de dados antigos) — o caminho normal de upload não passa mais por aqui,
-// ver "uploadArquivo" no doPost.
-function processarDoc_(r, cache){
-  var out = JSON.parse(JSON.stringify(r));
-  var mudou = false;
-  if (out.arquivo && String(out.arquivo).indexOf("data:") === 0 && !out.driveId){
-    try {
-      var folder = ensureDriveFolder_(out.pastaId, cache);
-      var parts = String(out.arquivo).split(",");
-      var m = parts[0].match(/data:(.*?);base64/);
-      var mime = m ? m[1] : "application/octet-stream";
-      var bytes = Utilities.base64Decode(parts[1]);
-      var nome = (out.titulo || "arquivo") + "." + (out.ext || "bin");
-      var file = folder.createFile(Utilities.newBlob(bytes, mime, nome));
-      try { file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch(eShare) { Logger.log("Falha ao restringir compartilhamento: "+eShare); }
-      out.driveId = file.getId();
-      out.driveUrl = file.getUrl();
-      out.arquivo = "";
-      out.erroUpload = "";
-      mudou = true;
-    } catch(e) {
-      out.erroUpload = String(e && e.message || e);
-      mudou = true;
-    }
-  }
-  if (out.movePending && out.driveId){
-    try {
-      var file2 = DriveApp.getFileById(out.driveId);
-      var target = ensureDriveFolder_(out.pastaId, cache);
-      file2.moveTo(target);
-      mudou = true;
-    } catch(e) {}
-    out.movePending = false;
-  }
-  return mudou ? out : r;
-}
-
-// ITEM 7: varre recursivamente a pasta raiz do Drive e devolve arquivos/subpastas
-// que ainda não estão cadastrados na planilha (comparando pelos IDs já salvos
-// em "Pastas".driveFolderId e "Documentos".driveId). Uso restrito a admin.
-function escanearPendentes_(){
-  var pastasReg = lerFolha_("Pastas").map(function(r){ return r.obj.driveFolderId; }).filter(Boolean);
-  var docsReg = lerFolha_("Documentos").map(function(r){ return r.obj.driveId; }).filter(Boolean);
-  var raiz = pastaDriveRaiz_();
-  var pastasNovas = [];
-  var arquivosNovos = [];
-  function varrer(folder, caminho){
-    var subpastas = folder.getFolders();
-    while (subpastas.hasNext()){
-      var sub = subpastas.next();
-      var id = sub.getId();
-      var camAtual = caminho + "/" + sub.getName();
-      if (pastasReg.indexOf(id) === -1){
-        pastasNovas.push({driveFolderId:id, nome:sub.getName(), caminho:camAtual});
+      #loader {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        user-select: none;
       }
-      varrer(sub, camAtual);
-    }
-    var arquivos = folder.getFiles();
-    while (arquivos.hasNext()){
-      var f = arquivos.next();
-      var fid = f.getId();
-      if (docsReg.indexOf(fid) === -1){
-        arquivosNovos.push({driveId:fid, nome:f.getName(), url:f.getUrl(), caminho:caminho, tamanho:f.getSize()});
+
+      /* Círculo que gira + pontos dentro */
+      .spinner {
+        position: relative;
+        width: 68px;
+        height: 68px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
       }
-    }
-  }
-  varrer(raiz, raiz.getName());
-  return {pastas: pastasNovas, arquivos: arquivosNovos};
-}
 
-// ITEM 4 (sincronização com o Drive): o caminho inverso de escanearPendentes_ —
-// acha, na planilha, pastas/arquivos cujo driveFolderId/driveId não existe
-// mais no Drive (foi excluído por fora do app, direto no Drive) ou está na
-// lixeira do Drive. Uso restrito a admin. Só avalia registros que já têm um
-// id do Drive gravado — linhas ainda "Enviando para o Drive…" (sem
-// driveId/driveFolderId) não são órfãs, só ainda não terminaram de subir.
-
-// V19 CORREÇÃO DEFINITIVA — RECONCILIAÇÃO DRIVE -> PLANILHA
-// A versão anterior apenas "escanearPendentes_()" e mostrava uma lista para
-// importação manual. Isso não resolvia o caso em que a planilha estava vazia
-// ou incompleta: o login funcionava, mas o Dashboard recebia 0 pastas/arquivos.
-// Esta rotina importa/vincula automaticamente o que já existe fisicamente em
-// SGD_Arquivos, preservando registros existentes e sem apagar nada do Drive.
-function repararDriveParaPlanilha_(usuario){
-  if(!usuario || !ehAdmin_(usuario)) throw new Error("apenas administradores");
-  var lock=LockService.getScriptLock();
-  lock.waitLock(30000);
-  try{
-    var raiz=pastaDriveRaiz_();
-    var pastasRows=lerFolha_("Pastas"), docsRows=lerFolha_("Documentos");
-    var pastas=pastasRows.map(function(r){return r.obj;}), docs=docsRows.map(function(r){return r.obj;});
-    var pastaPorDrive={}, pastaPorChave={}, docPorDrive={}, docPorChave={};
-    pastas.forEach(function(p){
-      if(p.driveFolderId) pastaPorDrive[p.driveFolderId]=p;
-      pastaPorChave[String(p.parentId||"")+"\n"+String(p.nome||"")]=p;
-    });
-    docs.forEach(function(d){
-      if(d.driveId) docPorDrive[d.driveId]=d;
-      docPorChave[String(d.pastaId||"")+"\n"+String(d.titulo||"")]=d;
-    });
-
-    var agora=Date.now(), novasPastas=0, atualizadasPastas=0, novosDocs=0, atualizadosDocs=0;
-    var pastaIdPorDrive={};
-    pastaIdPorDrive[raiz.getId()]=null;
-
-    function idNovo(prefix,driveId){ return prefix+String(driveId).replace(/[^A-Za-z0-9_-]/g,""); }
-    function extDeNome_(nome){
-      var m=String(nome||"").match(/\.([^.\\/]+)$/);return m?m[1].toLowerCase():"";
-    }
-
-    function varrerPasta_(folder,parentAppId){
-      var sub=folder.getFolders();
-      while(sub.hasNext()){
-        var f=sub.next(),fid=f.getId(),nome=f.getName();
-        var p=pastaPorDrive[fid];
-        if(!p) p=pastaPorChave[String(parentAppId||"")+"\n"+nome];
-        if(!p){
-          p={id:idNovo("drv_",fid),nome:nome,parentId:parentAppId||null,criadaPor:usuario.id,criadoEm:agora,driveFolderId:fid};
-          pastas.push(p);pastaPorDrive[fid]=p;pastaPorChave[String(parentAppId||"")+"\n"+nome]=p;novasPastas++;
-        }else{
-          var mudou=false;
-          if(p.driveFolderId!==fid){p.driveFolderId=fid;mudou=true;}
-          if((p.parentId||null)!==(parentAppId||null)){p.parentId=parentAppId||null;mudou=true;}
-          if(!p.nome){p.nome=nome;mudou=true;}
-          if(!p.criadaPor){p.criadaPor=usuario.id;mudou=true;}
-          if(!p.criadoEm){p.criadoEm=agora;mudou=true;}
-          if(mudou) atualizadasPastas++;
-          pastaPorDrive[fid]=p;
-        }
-        pastaIdPorDrive[fid]=p.id;
-        varrerPasta_(f,p.id);
+      /* Anel girando (desenhado via ::before para não girar os pontos junto) */
+      .spinner::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 3px solid #dde3ea;
+        border-top-color: #2563eb;
+        animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+        box-shadow: 0 4px 16px rgba(37, 99, 235, 0.12);
       }
-      var files=folder.getFiles();
-      while(files.hasNext()){
-        var f=files.next(),fid=f.getId(),nome=f.getName(),pid=parentAppId||null;
-        var d=docPorDrive[fid];
-        if(!d) d=docPorChave[String(pid||"")+"\n"+nome];
-        var ext=extDeNome_(nome), base=ext?nome.slice(0,-ext.length-1):nome;
-        if(!d){
-          d={id:idNovo("drvdoc_",fid),titulo:base||nome,descricao:"",tipo:"arquivo",ext:ext,mime:f.getMimeType(),pastaId:pid,criadaPor:usuario.id,criadoEm:agora,atualizadoEm:f.getLastUpdated().getTime(),tamanho:f.getSize(),driveId:fid,driveUrl:f.getUrl(),arquivo:"",erroUpload:""};
-          docs.push(d);docPorDrive[fid]=d;docPorChave[String(pid||"")+"\n"+nome]=d;novosDocs++;
-        }else{
-          var mudouD=false;
-          if(d.driveId!==fid){d.driveId=fid;mudouD=true;}
-          if((d.pastaId||null)!==pid){d.pastaId=pid;mudouD=true;}
-          if(!d.titulo)d.titulo=base||nome;
-          if(!d.ext&&ext)d.ext=ext;
-          if(!d.mime)d.mime=f.getMimeType();
-          if(!d.tamanho)d.tamanho=f.getSize();
-          if(!d.driveUrl)d.driveUrl=f.getUrl();
-          if(!d.criadaPor)d.criadaPor=usuario.id;
-          if(!d.criadoEm)d.criadoEm=agora;
-          if(mudouD)atualizadosDocs++;
-          docPorDrive[fid]=d;
-        }
+
+      /* Três pontos pulsando no centro */
+      .spinner span {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #2563eb;
+        animation: dots 1.2s ease-in-out infinite;
       }
-    }
-    varrerPasta_(raiz,null);
 
-    var shP=folha_("Pastas");
-    if(pastas.length){shP.clearContents();shP.getRange(1,1,pastas.length,1).setValues(pastas.map(function(x){return [JSON.stringify(x)];}));}
-    else shP.clearContents();
-    var shD=folha_("Documentos");
-    if(docs.length){shD.clearContents();shD.getRange(1,1,docs.length,1).setValues(docs.map(function(x){return [JSON.stringify(x)];}));}
-    else shD.clearContents();
+      .spinner span:nth-child(1) { animation-delay: 0s; }
+      .spinner span:nth-child(2) { animation-delay: 0.15s; }
+      .spinner span:nth-child(3) { animation-delay: 0.3s; }
 
-    return {ok:true,importadasPastas:novasPastas,atualizadasPastas:atualizadasPastas,importadosDocumentos:novosDocs,atualizadosDocumentos:atualizadosDocs,totalPastas:pastas.length,totalDocumentos:docs.length,raizId:raiz.getId()};
-  }finally{lock.releaseLock();}
-}
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
 
-function verificarOrfaos_(){
-  var pastasOrfas = [];
-  var docsOrfaos = [];
-  lerFolha_("Pastas").forEach(function(item){
-    var id = item.obj.driveFolderId;
-    if (!id) return;
-    try {
-      var f = DriveApp.getFolderById(id);
-      if (f.isTrashed()) throw new Error("trashed");
-    } catch(e) {
-      pastasOrfas.push({id:item.obj.id, nome:item.obj.nome});
-    }
-  });
-  lerFolha_("Documentos").forEach(function(item){
-    var id = item.obj.driveId;
-    if (!id) return;
-    try {
-      var f = DriveApp.getFileById(id);
-      if (f.isTrashed()) throw new Error("trashed");
-    } catch(e) {
-      docsOrfaos.push({id:item.obj.id, titulo:item.obj.titulo});
-    }
-  });
-  return {pastas: pastasOrfas, arquivos: docsOrfaos};
-}
+      @keyframes dots {
+        0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+        40%           { opacity: 1;    transform: scale(1.15); }
+      }
 
-// ---------- WEB APP / API EXTERNA ----------
-// O frontend do GitHub Pages não usa google.script.run. Ele chama esta
-// implantação por JSONP (leituras/ações) e por POST em iframe (upload).
-var API_PUBLICA_ = {
-  apiObterSalt: true, apiLogin: true, apiLogout: true, apiPull: true, apiAction: true,
-  apiTrocarSenha: true, apiAtualizarPerfil: true, apiPush: true,
-  apiEnsureRoot: true, apiExcluirDrive: true, apiLimparExcluidos: true, apiSincronizarDrive: true
-};
-function jsonpResposta_(callback, data){
-  callback = String(callback || '');
-  if(!/^[A-Za-z_$][0-9A-Za-z_$]*(?:\.[A-Za-z_$][0-9A-Za-z_$]*)*$/.test(callback)){
-    return ContentService.createTextOutput(JSON.stringify({ok:false,erro:'callback inválido'}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  return ContentService.createTextOutput(callback + '(' + JSON.stringify(data) + ');')
-    .setMimeType(ContentService.MimeType.JAVASCRIPT);
-}
-function apiSincronizarDrive(token){
-  var u=validarSessao_(token);
-  return u?repararDriveParaPlanilha_(u):{ok:false,authOk:false,erro:"sessao_expirada"};
-}
+      #custom-iframe {
+        width: 100%;
+        height: 100vh;
+        border: none;
+        display: block;
+        opacity: 0;
+        transition: opacity 0.4s ease-in-out;
+        background-color: #f0f2f5;
+      }
+    </style>
+</head>
+<body>
 
-function executarApiFn_(fn,args){
-  var mapa={
-    apiObterSalt:apiObterSalt, apiLogin:apiLogin, apiLogout:apiLogout, apiPull:apiPull, apiAction:apiAction,
-    apiTrocarSenha:apiTrocarSenha, apiAtualizarPerfil:apiAtualizarPerfil,
-    apiPush:apiPush, apiEnsureRoot:apiEnsureRoot, apiExcluirDrive:apiExcluirDrive,
-    apiLimparExcluidos:apiLimparExcluidos, apiSincronizarDrive:apiSincronizarDrive
-  };
-  if(!API_PUBLICA_[fn] || !mapa[fn]) return {ok:false,erro:'função API não permitida'};
-  return mapa[fn].apply(null,Array.isArray(args)?args:[]);
-}
-function executarApiGet_(e){
-  var fn=String((e&&e.parameter&&e.parameter.fn)||'');
-  var raw=String((e&&e.parameter&&e.parameter.args)||'[]'),args=[];
-  try{args=JSON.parse(raw);if(!Array.isArray(args))throw new Error('args inválidos');}
-  catch(err){return {ok:false,erro:'argumentos inválidos'};}
-  try{return executarApiFn_(fn,args);}catch(err2){return {ok:false,erro:String(err2&&err2.message||err2)};}
-}
-function doGet(e){
-  // BACKEND API-ONLY: o frontend oficial fica no GitHub Pages.
-  // Nunca servimos index.html aqui, evitando que /exec seja carregado
-  // acidentalmente dentro de iframe pelo frontend.
-  if(e && e.parameter && e.parameter.api==='1'){
-    var result=executarApiGet_(e);
-    return jsonpResposta_(e.parameter.callback,result);
-  }
-  return ContentService.createTextOutput(JSON.stringify({ok:true,versao:VERSAO,servico:'SGD_API',mensagem:'API ativa. Use o frontend do GitHub Pages.'}))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-function doPost(e){
-  var raw=String((e&&e.parameter&&e.parameter.payload)||'');
-  var body={};
-  try{body=raw?JSON.parse(raw):{};}catch(err){body={};}
-  var fn=String(body.fn||'');
-  var args=Array.isArray(body.args)?body.args:[];
-  var result;
-  try{
-    if(fn==='apiUploadArquivo'){
-      var uploadBody=body.payload||{};
-      result=apiUploadArquivo(String(uploadBody.token||''),uploadBody);
-    }else{
-      result=executarApiFn_(fn,args);
-    }
-  }catch(err2){
-    result={ok:false,erro:String(err2&&err2.message||err2)};
-  }
-  var id=String(body.requestId||'');
-  var safe=JSON.stringify(result).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
-  var html='<html><body><script>parent.postMessage({type:"hddocs-api-result",id:'+JSON.stringify(id)+',data:'+safe+'},"*");</script></body></html>';
-  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
+  <div id="loader">
+    <div class="spinner" aria-label="Carregando">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+  </div>
+
+  <iframe 
+    id="custom-iframe" 
+    src="https://script.google.com/macros/s/AKfycbxWd5Koielaa9VtbgYzMuBYIVPen8NFBlJMS3_52QY1U0nZXUCo1Qk7O8g7ezJiNRmHbA/exec" 
+    title="Vagas Click"
+    onload="document.getElementById('loader').style.display='none'; this.style.opacity='1';">
+  </iframe>
+
+</body>
+</html>
