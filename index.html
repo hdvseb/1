@@ -1531,13 +1531,35 @@ function reenviarUpload(docId){
   toast('Reenviando "' + d.titulo + '" para o Drive…');
   renderItens();
 }
+
+
 function salvarDocArquivo(base, dataUrl){
   const tamanho = Math.round(dataUrl.length * 0.75);
   const docs = DB.get('Documentos');
   const doc = Object.assign({}, base, {arquivo: dataUrl, tamanho});
+  
   docs.push(doc);
   DB.set('Documentos', docs);
-  if(Sync.url()) enviarArquivoAoDrive_(doc);
+  
+  if(Sync.url()){
+    var pushResult = Sync.push('Documentos', [doc]);
+    
+    // Verifica se retornou uma Promise
+    if(pushResult && typeof pushResult.then === 'function'){
+      pushResult.then(function(){
+        enviarArquivoAoDrive_(doc);
+      }).catch(function(err){
+        console.error("Erro no push:", err);
+        enviarArquivoAoDrive_(doc); // Tenta mesmo com erro
+      });
+    } else {
+      // Se não retornou Promise, aguarda e envia
+      setTimeout(function(){
+        enviarArquivoAoDrive_(doc);
+      }, 500);
+    }
+  }
+  
   return true;
 }
 
