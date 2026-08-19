@@ -1513,6 +1513,7 @@ function enviarArquivoAoDrive_(doc){
    deve pedir para o servidor tentar mover de novo, não reenviar conteúdo.
    Só quando o documento nunca chegou a ter driveId (upload original que
    falhou) é que usamos a cópia local do arquivo para reenviar o conteúdo. */
+
 function reenviarUpload(docId){
   const d = DB.get('Documentos').find(x => x.id === docId);
   if(!d){ return; }
@@ -1532,36 +1533,53 @@ function reenviarUpload(docId){
   renderItens();
 }
 
+function enviarArquivoAoDrive_(doc){
+  const u = currentUser();
+  
+  Sync.uploadArquivo({
+    userId: u ? u.id : '',
+    docId: doc.id,
+    pastaId: doc.pastaId,
+    titulo: doc.titulo,
+    ext: doc.ext,
+    mime: doc.mime,
+    criadoEm: doc.criadoEm,
+    arquivo: doc.arquivo
+  });
+  
+  // Força refresh após 2 segundos
+  setTimeout(function(){
+    Sync.pullAll(); // Faz pull de todos os dados
+    renderItens();  // Re-renderiza a interface
+  }, 2000);
+}
+
 
 function salvarDocArquivo(base, dataUrl){
   const tamanho = Math.round(dataUrl.length * 0.75);
   const docs = DB.get('Documentos');
   const doc = Object.assign({}, base, {arquivo: dataUrl, tamanho});
   
+  // 1. Salva no banco local
   docs.push(doc);
   DB.set('Documentos', docs);
   
+  // 2. Atualiza a interface
+  renderItens();
+  
+  // 3. Envia TODOS os documentos para a planilha (não só o novo)
   if(Sync.url()){
-    var pushResult = Sync.push('Documentos', [doc]);
+    Sync.push('Documentos', docs);
     
-    // Verifica se retornou uma Promise
-    if(pushResult && typeof pushResult.then === 'function'){
-      pushResult.then(function(){
-        enviarArquivoAoDrive_(doc);
-      }).catch(function(err){
-        console.error("Erro no push:", err);
-        enviarArquivoAoDrive_(doc); // Tenta mesmo com erro
-      });
-    } else {
-      // Se não retornou Promise, aguarda e envia
-      setTimeout(function(){
-        enviarArquivoAoDrive_(doc);
-      }, 500);
-    }
+    // 4. Aguarda e faz o upload do arquivo
+    setTimeout(function(){
+      enviarArquivoAoDrive_(doc);
+    }, 1500);
   }
   
   return true;
 }
+
 
 /* ===== MOVER ARQUIVO ===== */
 function nomeCaminho(p){
@@ -3495,6 +3513,26 @@ try{
   try{ toast('Erro na inicialização: ' + err.message, 'error'); }catch(e){}
   mostrarLogin();
 }
+
+// --- INÍCIO DA SINCRONIZAÇÃO AUTOMÁTICA ---
+function iniciarSincronizacaoAutomatica(){
+  // Verifica a cada 30 segundos se há novos arquivos no Drive
+  setInterval(function(){
+    // Só executa se o usuário estiver logado e o sistema de sync estiver ativo
+    if(typeof currentUser === 'function' && currentUser() && typeof Sync !== 'undefined' && Sync.url()){
+      if(typeof Sync.pullAll === 'function') Sync.pullAll();
+      if(typeof renderItens === 'function') renderItens();
+    }
+  }, 30000); // 30000 milissegundos = 30 segundos
+}
+
+// Inicia a função assim que a página carregar
+if(document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', iniciarSincronizacaoAutomatica);
+} else {
+  iniciarSincronizacaoAutomatica();
+}
+// --- FIM DA SINCRONIZAÇÃO AUTOMÁTICA ---
 
 </script>
 </body>
