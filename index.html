@@ -81,14 +81,17 @@ button{font-family:inherit}
 .search-box:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,82,194,.13)}
 .search-box i{color:var(--muted)}
 .search-box input{border:none;outline:none;flex:1;font:inherit;height:100%;background:transparent}
+.search-clear{border:none;background:transparent;color:var(--muted);cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;border-radius:50%;line-height:0}
+.search-clear:hover{color:var(--primary);background:rgba(21,82,194,.08)}
+.search-clear:hover i{color:var(--primary)}
 .viewmenu{position:relative}
 .viewmenu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:80;min-width:220px;display:none;max-height:340px;overflow-y:auto}
 .viewmenu-pop.open{display:block;animation:pop .18s ease}
 /* ===== menu de ações "três pontinhos" (usado no celular) ===== */
 .item-menu{position:relative;display:inline-flex}
-.item-menu>.btn-ic{width:34px;height:34px;flex:0 0 34px;background:var(--primary);border-color:var(--primary);color:#fff}
-.item-menu>.btn-ic:hover{background:var(--primary-dark);border-color:var(--primary-dark)}
-.item-menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:90;min-width:210px;display:none}
+.item-menu>.btn-ic{width:34px;height:34px;flex:0 0 34px;background:#fff;border-color:var(--border);color:var(--primary)}
+.item-menu>.btn-ic:hover{background:#f2f7ff;border-color:var(--primary)}
+.item-menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(10,30,70,.18);padding:6px;z-index:90;min-width:210px;display:none;max-width:calc(100vw - 24px)}
 .item-menu-pop.open{display:block;animation:pop .18s ease}
 .menu-line{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;text-align:left;padding:10px 12px;border-radius:8px;font:inherit;font-size:13.5px;font-weight:600;color:var(--text);cursor:pointer}
 .menu-line:hover{background:#f4f8ff}
@@ -134,6 +137,7 @@ button{font-family:inherit}
 .item-info strong{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item-info small{color:var(--muted);font-size:12px}
 .item-desc{color:var(--muted);font-size:12.5px;white-space:normal;overflow-wrap:break-word;line-height:1.4}
+.item-caminho{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
 .item-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chev{color:#b6c4dd;font-size:12px}
 .item-row[data-action="open-folder"],.lrow[data-action="open-folder"]{cursor:pointer}
@@ -432,6 +436,12 @@ const PAPEIS  = { master:'Master Admin', admin:'Administrador', editor:'Editor',
 const FOLHAS  = ['Usuarios','Pastas','Permissoes','Documentos','Empresa'];
 const PLACEHOLDER_LOGO = '';
 const DEFAULT_FORMATS = ['pdf','txt','md','log','json','csv','xml','doc','docx','odt','xls','xlsx','ods','ppt','pptx','mp4','webm','mov','m4v','mp3','wav','ogg','m4a','png','jpg','jpeg','gif','webp','svg','bmp','zip','rar','7z'];
+// ITEM 5: limites do campo "tempo de inatividade" nas Configurações — espelha
+// INATIVIDADE_MIN_MIN/MAX_MIN do Code.gs, que é quem de fato aplica o limite
+// na validação de sessão no servidor.
+const INATIVIDADE_MIN_MIN = 5;
+const INATIVIDADE_MAX_MIN = 240;
+const INATIVIDADE_PADRAO_MIN = 30;
 const APP_VERSAO = 48;
 const BUILD_ID = 'SGD-GITHUB-V44-LOGIN-POST-LOGO-CONFIG';
 
@@ -527,13 +537,14 @@ const PERMS_LIST = [
   {k:'imprimir',     label:'Imprimir',     ic:'fa-print'},
   {k:'upload',       label:'Upload',       ic:'fa-upload'},
   {k:'download',     label:'Download',     ic:'fa-download'},
+  {k:'enviar_email', label:'Enviar e-mail',ic:'fa-envelope'},
   {k:'criar_pasta',  label:'Criar pasta',  ic:'fa-folder-plus'},
   {k:'excluir_pasta',label:'Excluir pasta',ic:'fa-folder-minus'}
 ];
 const ALL_PERMS = PERMS_LIST.map(p => p.k);
 const PRESETS = {
   visualizador: ['visualizar','imprimir','download'],
-  editor:       ['visualizar','editar','excluir','imprimir','upload','download','criar_pasta'],
+  editor:       ['visualizar','editar','excluir','imprimir','upload','download','enviar_email','criar_pasta'],
   completo:     ALL_PERMS.slice()
 };
 const LEGACY_NIVEL = {
@@ -636,6 +647,28 @@ function filtrarTombstones_(folha, rows){
     const t = m.get(r.id);
     if(t === undefined) return true;
     if(now - t > TOMBSTONE_MS){ m.delete(r.id); return true; }
+    return false;
+  });
+}
+/* Igual ao mecanismo de tombstones acima, mas para "Excluidos": essas
+   linhas não têm "id" (a chave é data_hora+usuario+tipo+nome, ver
+   excluidoKey), então usam seu próprio mapa. Protege contra um pull que
+   esteja em voo (ou seja disparado por outra ação) responder logo depois
+   da exclusão selecionada confirmar no servidor, trazendo de volta as
+   linhas que acabaram de ser removidas. */
+const tombstonesExcluidos_ = new Map();
+function marcarExcluidoHistorico_(chaves){
+  const now = Date.now();
+  (Array.isArray(chaves) ? chaves : []).forEach(k => { if(k) tombstonesExcluidos_.set(k, now); });
+}
+function filtrarTombstonesExcluidos_(rows){
+  if(!tombstonesExcluidos_.size || !Array.isArray(rows)) return rows;
+  const now = Date.now();
+  return rows.filter(r => {
+    const k = excluidoKey(r);
+    const t = tombstonesExcluidos_.get(k);
+    if(t === undefined) return true;
+    if(now - t > TOMBSTONE_MS){ tombstonesExcluidos_.delete(k); return true; }
     return false;
   });
 }
@@ -763,14 +796,14 @@ let jsonpSeq = 0;
  * Upload de arquivo continua usando POST em iframe separadamente, pois o
  * payload pode conter base64 e não deve ser colocado na URL.
  */
-function gasCall_(fn,args){
+function gasCall_(fn,args,timeoutMs){
   args=args||[];
   if(!DEFAULT_GAS_URL) return Promise.reject(new Error('URL do Apps Script não configurada.'));
   return new Promise((resolve,reject)=>{
     const cb='__hddocs_jsonp_'+Date.now()+'_'+(++jsonpSeq);
     const script=document.createElement('script');
     let done=false;
-    const timer=setTimeout(()=>finish(new Error('Tempo esgotado ao consultar o Apps Script. Verifique se a implantação do Apps Script está publicada para "Qualquer pessoa".')),JSONP_TIMEOUT_MS);
+    const timer=setTimeout(()=>finish(new Error('Tempo esgotado ao consultar o Apps Script. Verifique se a implantação do Apps Script está publicada para "Qualquer pessoa".')),Number(timeoutMs||JSONP_TIMEOUT_MS));
     function cleanup(){
       clearTimeout(timer);
       try{script.remove();}catch(e){}
@@ -859,8 +892,10 @@ let backendAntigo = false;
    anterior da mesma aba retornar. Isso é um reforço no cliente — a correção
    definitiva (merge por id) está no servidor, no Code.gs. */
 const filaPush_ = {};
+
 function corpoComUsuario_(extra){ return Object.assign({token:session?session.token:''},extra||{}); }
 const Sync = {
+
   url(){ return !!DEFAULT_GAS_URL; },
   push(f,rows,idsAlterados){
     if(!session||!DEFAULT_GAS_URL)return;
@@ -869,7 +904,19 @@ const Sync = {
     const body=corpoComUsuario_({folha:f,rows:out}),anterior=filaPush_[f]||Promise.resolve();
     const idsProtegidos=Array.isArray(idsAlterados)?idsAlterados:[];
     const protegeMoveRace = (f==='Documentos'||f==='Pastas');
-    filaPush_[f]=anterior.then(()=>gasCall_('apiPush',[body])).then(res=>{
+    // CORREÇÃO: apiPush move cada arquivo/pasta alterado no Drive um por um,
+    // sequencialmente, no servidor (ver comentário "BUG 1" acima) — mover
+    // vários itens de uma vez pode facilmente ultrapassar o timeout fixo de
+    // 25s usado para chamadas normais (login, pull, ações simples), mesmo
+    // quando o servidor está processando normalmente e vai terminar segundos
+    // depois. Isso gerava o aviso "Não foi possível confirmar a
+    // sincronização com o Drive agora" só por causa do timeout do lado do
+    // cliente, não por uma falha real. Damos mais tempo proporcional à
+    // quantidade de itens alterados nesse push (25s + 4s por item, até 90s).
+    const timeoutPush = protegeMoveRace
+      ? Math.min(90000, Math.max(JSONP_TIMEOUT_MS, JSONP_TIMEOUT_MS + idsProtegidos.length*4000))
+      : JSONP_TIMEOUT_MS;
+    filaPush_[f]=anterior.then(()=>gasCall_('apiPush',[body],timeoutPush)).then(res=>{
       // Push confirmado pelo servidor: a partir daqui a resposta já reflete
       // o estado final (a função apiPush só retorna depois de mover os
       // arquivos/pastas no Drive), então é seguro liberar a proteção e
@@ -926,14 +973,22 @@ const Sync = {
   escanearPendentes(){return chamarAcaoGet_({acao:'escanearPendentes'});},
   verificarOrfaos(){return chamarAcaoGet_({acao:'verificarOrfaos'});},
   repararDrive(){return gasCall_('apiSincronizarDrive',[session?session.token:'']);},
-  async login(email,senha){
+  // ITEM 5 (login lento): antes o clique em "Entrar" disparava a chamada
+  // apiLoginDesafio SÓ NESSE MOMENTO — o usuário ficava esperando essa
+  // primeira ida-e-volta ao Apps Script (que pode levar alguns segundos,
+  // sobretudo em "cold start") antes mesmo de começar a validar a senha.
+  // Agora o desafio é pré-buscado em segundo plano assim que o usuário sai
+  // do campo de e-mail (evento blur), enquanto ele ainda está digitando a
+  // senha — na hora de clicar em "Entrar", muitas vezes só falta UMA
+  // chamada (a de verificação), não duas.
+  async login(email, senha, _semRetentativa){
     // V45 SEGURANÇA: login por desafio-resposta (nonce de uso único), em vez
     // de mandar um hash "fixo" reutilizável (salted/unsalted) por JSONP.
     // Antes, quem capturasse a URL da requisição (histórico do navegador,
     // logs, extensões) tinha em mãos o equivalente a uma segunda senha
     // válida indefinidamente. Agora:
-    //  1) o servidor emite um nonce de uso único com validade de 3 minutos
-    //     (apiLoginDesafio), vinculado a este e-mail;
+    //  1) o servidor emite um nonce de uso único com validade de alguns
+    //     minutos (apiLoginDesafio), vinculado a este e-mail;
     //  2) o navegador calcula localmente SHA-256(senha[+salt]) — o mesmo
     //     hash que o servidor guarda — e em cima dele calcula uma "prova"
     //     amarrada a esse nonce específico: SHA-256(hash + "::" + nonce);
@@ -948,20 +1003,45 @@ const Sync = {
         const digest=await crypto.subtle.digest('SHA-256',enc.encode(String(texto||'')));
         return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
       }
-      const desafio=await gasCall_('apiLoginDesafio',[email]);
-      if(!desafio||!desafio.ok||!desafio.nonce) return {ok:false,erro:(desafio&&desafio.erro)||'E-mail ou senha inválidos.'};
-      let hashLocal='';
-      if(desafio.modo==='salted' && desafio.salt){
-        hashLocal=await sha256Hex_(String(senha||'')+'::'+String(desafio.salt));
-      }else{
-        hashLocal=await sha256Hex_(String(senha||''));
+      // Reaproveita o desafio pré-buscado se ele for para o MESMO e-mail e
+      // ainda estiver "fresco" (folga de segurança bem abaixo da validade
+      // real no servidor, para nunca depender de acertar o limite exato).
+      let desafio = null;
+      const pre = desafioPreFetch_;
+      if(pre && pre.email === email && pre.dados && (Date.now() - pre.obtidoEm) < 120000){
+        desafio = pre.dados;
       }
-      const prova=await sha256Hex_(hashLocal+'::'+String(desafio.nonce));
-      return gasCall_('apiLoginComDesafio',[email,[prova],desafio.nonce]);
-    }catch(e){ return {ok:false,erro:(e&&e.message)||'Não foi possível autenticar.'}; }
+      desafioPreFetch_ = null;
+      if(!desafio){
+        desafio = await gasCall_('apiLoginDesafio', [email]);
+      }
+      if(!desafio || !desafio.ok || !desafio.nonce) return {ok:false, erro:(desafio && desafio.erro) || 'E-mail ou senha inválidos.'};
+      let hashLocal = '';
+      if(desafio.modo === 'salted' && desafio.salt){
+        hashLocal = await sha256Hex_(String(senha||'') + '::' + String(desafio.salt));
+      } else {
+        hashLocal = await sha256Hex_(String(senha||''));
+      }
+      const prova = await sha256Hex_(hashLocal + '::' + String(desafio.nonce));
+      const res = await gasCall_('apiLoginComDesafio', [email, [prova], desafio.nonce]);
+      // ITEM 4: se o desafio usado (inclusive um pré-buscado que ficou
+      // esperando o usuário digitar a senha) tiver expirado, tenta de novo
+      // de forma transparente — até duas vezes — buscando um desafio novo
+      // a cada tentativa. O usuário só vê a mensagem de erro se todas as
+      // tentativas falharem (o que na prática deixa de acontecer no dia a
+      // dia, mesmo com rede lenta).
+      if(res && res.desafioExpirado && !_semRetentativa){
+        return Sync.login(email, senha, 1);
+      }
+      if(res && res.desafioExpirado && _semRetentativa === 1){
+        return Sync.login(email, senha, 2);
+      }
+      return res;
+    }catch(e){ return {ok:false, erro:(e && e.message) || 'Não foi possível autenticar.'}; }
   },
   async trocarSenha(userId,senhaAtual,senhaNova){return gasCall_('apiTrocarSenha',[session?session.token:'',senhaAtual,senhaNova]);},
   async atualizarPerfil(userId,nome,email,senha){return gasCall_('apiAtualizarPerfil',[session?session.token:'',nome,email,senha||'']);},
+  async enviarEmailDocumento(docId,destinatario,assunto,mensagem){return gasCall_('apiEnviarEmailDocumento',[session?session.token:'',docId,destinatario,assunto||'',mensagem||'']);},
   async pull(){if(!DEFAULT_GAS_URL)throw new Error('URL do Apps Script indisponível');return gasCall_('apiPull',[session?session.token:'']);},
   applyData(data){
     if(!data||typeof data!=='object')return false;
@@ -1023,7 +1103,7 @@ function adotarDados(data){
         guardarFolhaSeguro(f, semRace);
       }
     });
-    if(Array.isArray(data.Excluidos)) guardarFolhaSeguro('Excluidos',data.Excluidos);
+    if(Array.isArray(data.Excluidos)) guardarFolhaSeguro('Excluidos', filtrarTombstonesExcluidos_(data.Excluidos));
     // CORREÇÃO (V48): ver ownerIsAdmin acima — guardado à parte (não passa
     // por DB.set) porque não é uma "planilha" e não deve disparar push.
     if(Array.isArray(data.AdminIds)){
@@ -1240,8 +1320,22 @@ function blobToDataURL(blob){
 }
 function obterBuffer(d){
   if(d.arquivo) return Promise.resolve(b64ToBytes(d.arquivo.split(',')[1]).buffer);
-  if(d.driveId) return fetch('https://drive.google.com/uc?export=download&id=' + d.driveId)
-    .then(r => { if(!r.ok) throw 0; return r.arrayBuffer(); });
+  // ITEM 2 (visualização do documento): antes buscava os bytes direto do
+  // navegador em drive.google.com/uc?export=download — como os arquivos são
+  // salvos como PRIVATE/NONE no Drive, essa chamada falha quase sempre por
+  // CORS/permissão, e o app caía no iframe de fallback (.../preview), que é
+  // a tela "permita que o Google acesse os cookies necessários" (bloqueio de
+  // cookies de terceiros do navegador). Agora os bytes vêm pelo próprio
+  // Apps Script (apiObterConteudoDocumento), que já tem acesso ao arquivo
+  // mesmo sendo privado — sem depender de fetch direto ao Drive nem de
+  // cookies de terceiros no caminho normal de visualização.
+  if(d.driveId){
+    if(!(session && session.token)) return Promise.reject(new Error('sessão expirada'));
+    return gasCall_('apiObterConteudoDocumento', [session.token, d.id]).then(res => {
+      if(!res || !res.ok || !res.base64) throw new Error((res && res.erro) || 'não foi possível obter o arquivo');
+      return b64ToBytes(res.base64).buffer;
+    });
+  }
   return Promise.reject(new Error('sem arquivo'));
 }
 function salvarArquivoBin(d, dataUrl, titulo){
@@ -1488,22 +1582,6 @@ function renderCamPages(){
     ? camPages.map((p, i) => '<div class="cam-item"><img src="' + p + '" alt="Página ' + (i+1) + '"><button class="btn-ic danger" data-action="cam-remove" data-idx="' + i + '" title="Remover página"><i class="fa-solid fa-xmark"></i></button></div>').join('')
     : '<p class="modal-sub" style="margin:6px 0">Nenhuma página capturada ainda.</p>';
 }
-/* ITEM 13/14: envia o conteúdo do arquivo pro Drive pelo endpoint dedicado,
-   fora da planilha (POST em iframe, sem depender de CORS; o resultado chega — o resultado chega no próximo pull,
-   que atualiza driveId/erroUpload e reflete na tela via renderItens). */
-function enviarArquivoAoDrive_(doc){
-  const u = currentUser();
-  Sync.uploadArquivo({
-    userId: u ? u.id : '',
-    docId: doc.id,
-    pastaId: doc.pastaId,
-    titulo: doc.titulo,
-    ext: doc.ext,
-    mime: doc.mime,
-    criadoEm: doc.criadoEm,
-    arquivo: doc.arquivo
-  });
-}
 /* ITEM 15: reenvia um documento que ficou com "erroUpload".
    CORREÇÃO: "erroUpload" agora também pode vir de uma FALHA AO MOVER um
    arquivo já existente no Drive (ver processarDoc_ em Code.gs — antes essa
@@ -1533,11 +1611,18 @@ function reenviarUpload(docId){
   renderItens();
 }
 
+/* ITEM 13/14: envia o conteúdo do arquivo pro Drive pelo endpoint dedicado,
+   fora da planilha (POST em iframe, sem depender de CORS). Sync.uploadArquivo
+   já enfileira este envio atrás do push de metadados da mesma linha
+   (filaPush_['Documentos']) e já dispara um pull assim que o servidor
+   confirmar — não é preciso nenhum setTimeout nem um pull manual aqui
+   (Sync.pullAll não existe; a função anterior quebrava com um erro
+   silencioso nesse ponto e nunca chegava a atualizar a tela). */
 function enviarArquivoAoDrive_(doc){
   const u = currentUser();
-  
+  if(!u) return;
   Sync.uploadArquivo({
-    userId: u ? u.id : '',
+    userId: u.id,
     docId: doc.id,
     pastaId: doc.pastaId,
     titulo: doc.titulo,
@@ -1546,12 +1631,6 @@ function enviarArquivoAoDrive_(doc){
     criadoEm: doc.criadoEm,
     arquivo: doc.arquivo
   });
-  
-  // Força refresh após 2 segundos
-  setTimeout(function(){
-    Sync.pullAll(); // Faz pull de todos os dados
-    renderItens();  // Re-renderiza a interface
-  }, 2000);
 }
 
 
@@ -1559,26 +1638,12 @@ function salvarDocArquivo(base, dataUrl){
   const tamanho = Math.round(dataUrl.length * 0.75);
   const docs = DB.get('Documentos');
   const doc = Object.assign({}, base, {arquivo: dataUrl, tamanho});
-  
-  // 1. Salva no banco local
   docs.push(doc);
   DB.set('Documentos', docs);
-  
-  // 2. Atualiza a interface
-  renderItens();
-  
-  // 3. Envia TODOS os documentos para a planilha (não só o novo)
-  if(Sync.url()){
-    Sync.push('Documentos', docs);
-    
-    // 4. Aguarda e faz o upload do arquivo
-    setTimeout(function(){
-      enviarArquivoAoDrive_(doc);
-    }, 1500);
-  }
-  
+  if(Sync.url()) enviarArquivoAoDrive_(doc);
   return true;
 }
+
 
 
 /* ===== MOVER ARQUIVO ===== */
@@ -1652,6 +1717,8 @@ function modalMoverPasta(p){
 let bloqueioAtivo = false;
 let pdfPendente = null;
 let officePendente = null;
+let imgPendente = null;
+let videoPendente = null;
 if(window.pdfjsLib){
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
@@ -1751,6 +1818,9 @@ function migrateDados(){
 
 /* ================= SESSÃO / PERMISSÕES EFETIVAS ================= */
 let session = null;
+// ITEM 5: guarda o desafio de login pré-buscado (ver Sync.login/blur do
+// campo de e-mail) — {email, dados, obtidoEm}.
+let desafioPreFetch_ = null;
 const sessionStore = {
   get(){ try{return sessionStorage.getItem('rio_session_v27') || '';}catch(e){return '';} },
   set(v){ try{sessionStorage.setItem('rio_session_v27',v);return true;}catch(e){return false;} },
@@ -1983,6 +2053,7 @@ function mostrarLogin(){
   $('#loginScreen').classList.remove('hidden');
   state.view = 'dashboard'; state.currentFolderId = null; state.search = '';
   state.viewMode = viewModeDefault();
+  pararMonitorInatividade_();
   aplicarMarca();
 }
 function iniciarApp(){
@@ -1991,8 +2062,55 @@ function iniciarApp(){
   state.viewMode = viewModeDefault();
   state.view = 'dashboard';
   renderApp();
+  iniciarMonitorInatividade_();
   if(backendAntigo) modalBackendAntigo();
 }
+/* ================= MONITOR DE INATIVIDADE (ITEM 5) =================
+   Antes não existia nenhum encerramento automático por inatividade no
+   navegador — só o servidor derrubava a sessão (fixo em 30 min) na
+   PRÓXIMA chamada à API, ou seja, um usuário que ficasse com a aba aberta
+   e parada continuava vendo a tela do app normalmente até tentar fazer
+   alguma ação. Agora o app conta o tempo sem atividade do usuário (mouse,
+   teclado, toque, scroll) e, ao atingir o limite configurado em
+   Configurações (mesmo valor usado pelo servidor), fecha a sessão sozinho
+   e volta para a tela de login. */
+let ultimaAtividade_ = Date.now();
+let monitorInatividadeId_ = null;
+function registrarAtividade_(){ ultimaAtividade_ = Date.now(); }
+function tempoInatividadeMsCliente_(){
+  const min = Number((getEmpresa() || {}).tempoInatividadeMin);
+  const clamped = isFinite(min) ? Math.min(INATIVIDADE_MAX_MIN, Math.max(INATIVIDADE_MIN_MIN, min)) : INATIVIDADE_PADRAO_MIN;
+  return clamped * 60 * 1000;
+}
+function encerrarPorInatividade_(){
+  if(!session) return;
+  if(session.token) gasCall_('apiLogout', [session.token]).catch(() => {});
+  limparSessao_();
+  pararMonitorInatividade_();
+  // ITEM 3: antes só trocava a tela via SPA (mostrarLogin), mantendo a
+  // página/JS em memória rodando havia muito tempo (com todos os timers,
+  // blob URLs de pré-visualização, modais, etc. acumulados). Agora faz um
+  // refresh completo da página — o app volta ao estado 100% limpo, como um
+  // primeiro carregamento — e mostra o aviso de inatividade logo em
+  // seguida, usando sessionStorage para sobreviver ao reload.
+  try{ sessionStorage.setItem('rio_toast_pos_reload', 'Sessão encerrada por inatividade. Faça login novamente.'); }catch(e){}
+  location.reload();
+}
+function iniciarMonitorInatividade_(){
+  registrarAtividade_();
+  if(monitorInatividadeId_) return;
+  ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(ev => {
+    document.addEventListener(ev, registrarAtividade_, {passive:true});
+  });
+  monitorInatividadeId_ = setInterval(() => {
+    if(!session){ pararMonitorInatividade_(); return; }
+    if(Date.now() - ultimaAtividade_ > tempoInatividadeMsCliente_()) encerrarPorInatividade_();
+  }, 15000);
+}
+function pararMonitorInatividade_(){
+  if(monitorInatividadeId_){ clearInterval(monitorInatividadeId_); monitorInatividadeId_ = null; }
+}
+function reiniciarMonitorInatividade_(){ registrarAtividade_(); }
 function navigate(view){
   state.view = view;
   state.search = '';
@@ -2095,7 +2213,9 @@ function renderDashboard(){
         '</div>' +
       '</div>' +
       '<div class="toolbar">' +
-        '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" value="' + esc(state.search) + '"></div>' +
+        '<div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="searchInput" value="' + esc(state.search) + '">' +
+          '<button type="button" class="search-clear" id="searchClear" title="Limpar busca" ' + (state.search ? '' : 'style="display:none"') + '><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
       '</div>' +
       '<div id="selBar"></div>' +
       '<input type="file" id="fileInput" accept="' + esc(acceptString()) + '" multiple class="hidden">' +
@@ -2106,7 +2226,7 @@ function renderDashboard(){
             (state.selecaoAtiva ? '<button class="btn btn-light" data-action="selecionar-todos"><i class="fa-solid fa-list-check"></i> Marcar todos</button>' : '') +
             '<button class="btn btn-light" data-action="toggle-modo-selecao"><i class="fa-solid ' + (state.selecaoAtiva ? 'fa-xmark' : 'fa-square-check') + '"></i> ' + (state.selecaoAtiva ? 'Desmarcar' : 'Selecionar') + '</button>' +
           '</div>' +
-          '<span class="contagem-arquivos"><i class="fa-solid fa-folder"></i> ' + totalPastas + ' pasta' + (totalPastas === 1 ? '' : 's') + ' &nbsp;•&nbsp; <i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
+          '<span class="contagem-arquivos" id="contagemArquivos"><i class="fa-solid fa-folder"></i> ' + totalPastas + ' pasta' + (totalPastas === 1 ? '' : 's') + ' &nbsp;•&nbsp; <i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's') + '</span>' +
         '</div>' +
       '</div>' +
       '<div id="itens"></div>' +
@@ -2114,7 +2234,18 @@ function renderDashboard(){
   '</div>';
   renderTrilha(); renderItens(); renderSelBar();
   const si = $('#searchInput');
-  if(si) si.addEventListener('input', e => { state.search = e.target.value; renderItens(); });
+  if(si) si.addEventListener('input', e => {
+    state.search = e.target.value;
+    const clr = $('#searchClear'); if(clr) clr.style.display = state.search ? '' : 'none';
+    renderItens();
+  });
+  const sc = $('#searchClear');
+  if(sc) sc.addEventListener('click', () => {
+    state.search = '';
+    if(si){ si.value = ''; si.focus(); }
+    sc.style.display = 'none';
+    renderItens();
+  });
 }
 function renderTrilha(){
   const el = $('#breadcrumb'); if(!el) return;
@@ -2169,8 +2300,14 @@ function renderAcoes_(itens, tipo, id){
   return itens.map(itemBotao_).join('');
 }
 function itensPasta_(p, dono, perms){
+  const podeGerir = perms.includes('editar') || perms.includes('excluir_pasta');
   return [
     dono ? {ic:'fa-share-nodes', title:'Permissões da pasta', action:'compartilhar', id:p.id} : null,
+    // ITEM 4: renomear pasta — usa a mesma permissão de "editar" (ou
+    // "excluir_pasta", que já cobre gestão completa da pasta) que o
+    // servidor já aceita em autorizadoPushPasta_ para atualizar uma pasta
+    // sem trocar de pai.
+    podeGerir ? {ic:'fa-pen', title:'Renomear', action:'renomear-pasta', id:p.id} : null,
     // ITEM: mover pasta usa a mesma permissão de "excluir_pasta" (gestão de
     // pastas) — admin sempre tem via permsAtuais/permsEff.
     perms.includes('excluir_pasta') ? {ic:'fa-folder-tree', title:'Mover', action:'mover-pasta', id:p.id} : null,
@@ -2186,6 +2323,7 @@ function itensPasta_(p, dono, perms){
 function itensDoc_(d, pd){
   return [
     pd.includes('visualizar') ? {ic:'fa-eye', title:'Visualizar', action:'ver-doc', id:d.id} : null,
+    pd.includes('enviar_email') ? {ic:'fa-envelope', title:'Enviar por e-mail', action:'email-doc', id:d.id} : null,
     acaoBaixarDescr_(d, pd.includes('download')),
     d.erroUpload ? {ic:'fa-rotate-right', title:'Reenviar para o Drive (' + d.erroUpload + ')', action:'reenviar-doc', id:d.id} : null,
     pd.includes('editar') ? {ic:'fa-folder-tree', title:'Mover', action:'mover-doc', id:d.id} : null,
@@ -2193,33 +2331,68 @@ function itensDoc_(d, pd){
     pd.includes('excluir') ? {ic:'fa-trash-can', title:'Excluir', action:'excluir-doc', id:d.id, danger:true} : null
   ];
 }
+// ITEM 1 (campo "localizar"): antes a busca só filtrava dentro da pasta
+// aberta no momento — pesquisar um documento que estivesse em outra pasta
+// simplesmente não trazia resultado nenhum. Agora, quando há texto digitado
+// no campo de busca, a pesquisa passa a considerar TODAS as pastas e
+// TODOS os documentos aos quais o usuário logado tem acesso (permissão de
+// "visualizar"), em qualquer nível da árvore — não só os itens da pasta
+// atual. Sem texto de busca, o comportamento continua o de sempre (mostra
+// só o conteúdo da pasta aberta).
+function caminhoPasta_(pastaId){
+  const partes = [];
+  let cur = pastaPorId(pastaId);
+  while(cur){ partes.unshift(cur.nome); cur = pastaPorId(cur.parentId); }
+  return partes.length ? partes.join(' / ') : 'Início';
+}
 function itensVisiveis(){
   const u = currentUser();
   const q = state.search.trim().toLowerCase();
-  let folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
-  let docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
-  if(!state.currentFolderId && !ehAdmin(u)){
-    folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
-    docs = docs.filter(d => permsDoc(d).includes('visualizar'));
-  } else if(state.currentFolderId){
-    folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
-    // ITEM 2/3: faltava esse mesmo filtro aqui — dentro de uma pasta, os
-    // ARQUIVOS apareciam pra todo mundo que tivesse acesso à pasta, mesmo
-    // sem permissão de Visualizar concedida a esse usuário especificamente.
-    if(!ehAdmin(u)) docs = docs.filter(d => permsDoc(d).includes('visualizar'));
+  let folders, docs;
+  if(q){
+    folders = DB.get('Pastas');
+    docs    = DB.get('Documentos');
+    if(!ehAdmin(u)){
+      folders = folders.filter(p => p.criadaPor === u.id || permsEff(u.id, p).includes('visualizar'));
+      docs    = docs.filter(d => permsDoc(d).includes('visualizar'));
+    }
+  } else {
+    folders = DB.get('Pastas').filter(p => (p.parentId || null) === (state.currentFolderId || null));
+    docs    = DB.get('Documentos').filter(d => (d.pastaId  || null) === (state.currentFolderId || null));
+    if(!state.currentFolderId && !ehAdmin(u)){
+      folders = folders.filter(p => permsEff(u.id, p).includes('visualizar'));
+      docs = docs.filter(d => permsDoc(d).includes('visualizar'));
+    } else if(state.currentFolderId){
+      folders = folders.filter(p => p.criadaPor === u.id || ehAdmin(u) || permsEff(u.id, p).includes('visualizar'));
+      // ITEM 2/3: faltava esse mesmo filtro aqui — dentro de uma pasta, os
+      // ARQUIVOS apareciam pra todo mundo que tivesse acesso à pasta, mesmo
+      // sem permissão de Visualizar concedida a esse usuário especificamente.
+      if(!ehAdmin(u)) docs = docs.filter(d => permsDoc(d).includes('visualizar'));
+    }
   }
   docs = docs.filter(d => formatoVisivel(d, u));
   if(q){
     folders = folders.filter(p => p.nome.toLowerCase().includes(q));
     docs    = docs.filter(d => d.titulo.toLowerCase().includes(q));
   }
-  return {folders, docs};
+  return {folders, docs, buscaGlobal: !!q};
 }
 function renderItens(){
   const el = $('#itens'); if(!el) return;
   try{
     const u = currentUser();
-    const {folders, docs} = itensVisiveis();
+    const {folders, docs, buscaGlobal} = itensVisiveis();
+    // ITEM 2 (contador não atualizava durante a busca): antes o total de
+    // pastas/arquivos só era calculado uma vez em renderDashboard() e nunca
+    // era refeito quando o usuário digitava no campo de busca (que só
+    // chama renderItens(), não renderDashboard()). Agora o contador é
+    // atualizado aqui, a cada renderização, refletindo o resultado da
+    // busca (inclusive busca global em todas as pastas).
+    const cont = $('#contagemArquivos');
+    if(cont){
+      const totalPastas = folders.length, totalArquivos = docs.length;
+      cont.innerHTML = '<i class="fa-solid fa-folder"></i> ' + totalPastas + ' pasta' + (totalPastas === 1 ? '' : 's') + ' &nbsp;•&nbsp; <i class="fa-solid fa-file"></i> ' + totalArquivos + ' arquivo' + (totalArquivos === 1 ? '' : 's');
+    }
     const perms = permsAtuais();
     const usuarios = getUsuarios();
     const nomeDe = id => (usuarios.find(x => x.id === id) || {}).nome || '—';
@@ -2248,7 +2421,8 @@ function renderItens(){
           chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
           '<span class="gname" title="' + esc(p.nome) + '">' + esc(p.nome) + avisoDrive(p.erroUpload) + '</span>' +
-          '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + '</span>' +
+          '<span class="gsmall">' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) +
+            (buscaGlobal ? ' • <i class="fa-solid fa-folder-tree"></i> ' + esc(caminhoPasta_(p.parentId)) : '') + '</span>' +
           '<div class="gcard-actions">' + acoesPasta(p, dono) + '</div></div>';
       }).join('') +
       docs.map(d => {
@@ -2257,7 +2431,8 @@ function renderItens(){
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
           '<span class="gname" title="' + esc(d.titulo) + '">' + esc(d.titulo) + avisoDrive(d.erroUpload) + '</span>' +
-          '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') + '</span>' +
+          '<span class="gsmall">' + ci.rot + (d.tamanho ? ' • ' + fmtTam(d.tamanho) : '') +
+            (buscaGlobal ? ' • <i class="fa-solid fa-folder-tree"></i> ' + esc(caminhoPasta_(d.pastaId)) : '') + '</span>' +
           '<div class="gcard-actions">' + acoesDoc(d, pd) + '</div></div>';
       }).join('');
     } else if(mode === 'lista'){
@@ -2268,7 +2443,7 @@ function renderItens(){
         return '<div class="lrow' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
           chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
-          '<span class="gname">' + esc(p.nome) + avisoDrive(p.erroUpload) + '</span>' +
+          '<span class="gname">' + esc(p.nome) + avisoDrive(p.erroUpload) + (buscaGlobal ? ' <small class="item-caminho">' + esc(caminhoPasta_(p.parentId)) + '</small>' : '') + '</span>' +
           '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
       }).join('') +
       docs.map(d => {
@@ -2276,7 +2451,7 @@ function renderItens(){
         return '<div class="lrow' + selCls('doc', d.id) + '">' +
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-          '<span class="gname">' + esc(d.titulo) + avisoDrive(d.erroUpload) + '</span>' +
+          '<span class="gname">' + esc(d.titulo) + avisoDrive(d.erroUpload) + (buscaGlobal ? ' <small class="item-caminho">' + esc(caminhoPasta_(d.pastaId)) + '</small>' : '') + '</span>' +
           '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
       }).join('');
     } else {
@@ -2285,10 +2460,11 @@ function renderItens(){
         const dono = p.criadaPor === u.id || ehAdmin(u);
         const privada = !ownerIsAdmin(p) && p.criadaPor !== u.id;
         const statusPasta = p.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(p.erroUpload) + '"></i> Falha ao mover no Drive' : '';
+        const caminhoPasta = buscaGlobal ? ' • <i class="fa-solid fa-folder-tree"></i> ' + esc(caminhoPasta_(p.parentId)) : '';
         return '<div class="item-row' + selCls('pasta', p.id) + '" data-action="open-folder" data-id="' + p.id + '">' +
           chk('pasta', p.id) +
           '<span class="item-ic ic-pasta"><i class="fa-solid ' + (privada ? 'fa-user-lock' : 'fa-folder') + '"></i></span>' +
-          '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + statusPasta + '</small></div>' +
+          '<div class="item-info"><strong>' + esc(p.nome) + '</strong><small>Pasta' + (privada ? ' privada' : '') + ' • ' + esc(nomeDe(p.criadaPor)) + ' • ' + fmtData(p.criadaEm) + statusPasta + caminhoPasta + '</small></div>' +
           '<div class="item-actions">' + acoesPasta(p, dono) + '<i class="fa-solid fa-chevron-right chev"></i></div></div>';
       }).join('') +
       docs.map(d => {
@@ -2298,10 +2474,11 @@ function renderItens(){
         const statusDrive = d.erroUpload ? ' • <i class="fa-solid fa-triangle-exclamation" style="color:#c0392b" title="' + esc(d.erroUpload) + '"></i> Falha no envio'
           : d.driveId ? ' • <i class="fa-brands fa-google-drive"></i> Drive'
           : (d.tipo === 'arquivo' && Sync.url()) ? ' • <i class="fa-solid fa-spinner fa-spin"></i> Enviando para o Drive…' : '';
+        const caminhoDoc = buscaGlobal ? ' • <i class="fa-solid fa-folder-tree"></i> ' + esc(caminhoPasta_(d.pastaId)) : '';
         return '<div class="item-row' + selCls('doc', d.id) + '">' +
           chk('doc', d.id) +
           '<span class="item-ic ' + ci.cls + '"><i class="fa-solid ' + ci.ic + '"></i></span>' +
-          '<div class="item-info"><strong>' + esc(d.titulo) + '</strong>' + (d.descricao ? '<span class="item-desc">' + esc(d.descricao) + '</span>' : '') + '<small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + statusDrive + '</small></div>' +
+          '<div class="item-info"><strong>' + esc(d.titulo) + '</strong>' + (d.descricao ? '<span class="item-desc">' + esc(d.descricao) + '</span>' : '') + '<small>' + ci.rot + (d.ext ? ' .'+esc(d.ext) : '') + tam + ' • ' + esc(nomeDe(d.criadoPor)) + ' • ' + fmtData(d.atualizadoEm || d.criadoEm) + statusDrive + caminhoDoc + '</small></div>' +
           '<span class="tag tag-arq"><i class="fa-solid ' + ci.ic + '"></i> ' + ci.rot + '</span>' +
           '<div class="item-actions">' + acoesDoc(d, pd) + '</div></div>';
       }).join('');
@@ -2336,11 +2513,17 @@ function handleUpload(file){
 
 /* ================= MODAIS ================= */
 function modalNovaPasta(){
-  openModal('<h3><i class="fa-solid fa-folder-plus"></i> Nova pasta</h3>' +
-    '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b> e também no Google Drive. Pastas criadas por usuários comuns são <b>privadas</b> até serem compartilhadas.</p>' +
-    '<label class="campo">Nome da pasta<input id="mNomePasta"></label>' +
+  modalPasta_(null);
+}
+function modalRenomearPasta(pastaId){
+  modalPasta_(pastaPorId(pastaId));
+}
+function modalPasta_(p){
+  openModal('<h3><i class="fa-solid ' + (p ? 'fa-pen' : 'fa-folder-plus') + '"></i> ' + (p ? 'Renomear pasta' : 'Nova pasta') + '</h3>' +
+    (p ? '' : '<p class="modal-sub">A pasta será criada dentro de: <b>' + esc((pastaPorId(state.currentFolderId) || {nome:'Raiz'}).nome) + '</b> e também no Google Drive. Pastas criadas por usuários comuns são <b>privadas</b> até serem compartilhadas.</p>') +
+    '<label class="campo">Nome da pasta<input id="mNomePasta" value="' + (p ? esc(p.nome) : '') + '"></label>' +
     '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
-    '<button class="btn btn-primary" data-action="salvar-pasta"><i class="fa-solid fa-folder-plus"></i> Criar pasta</button></div>');
+    '<button class="btn btn-primary" data-action="salvar-pasta" data-id="' + (p ? p.id : '') + '"><i class="fa-solid fa-floppy-disk"></i> ' + (p ? 'Salvar' : 'Criar pasta') + '</button></div>');
   setTimeout(() => { const i = $('#mNomePasta'); if(i) i.focus(); }, 60);
 }
 function modalDoc(docId){
@@ -2381,36 +2564,43 @@ function modalVer(docId){
   if(!pd.includes('visualizar')){ toast('Você não tem permissão para visualizar este arquivo.','error'); return; }
   const podeBaixar = pd.includes('download');
   const podeImprimir = pd.includes('imprimir');
+  const podeEmail = pd.includes('enviar_email');
   const protegido = !(podeBaixar && podeImprimir);
   const drivePrev = d.driveId ? 'https://drive.google.com/file/d/' + d.driveId + '/preview' : null;
   let corpo = '';
-  pdfPendente = null; officePendente = null;
+  pdfPendente = null; officePendente = null; imgPendente = null; videoPendente = null;
   const placeholderOffice = '<div class="doc-body" id="officePrev"><div class="no-prev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div></div>';
+  const placeholderMidia = '<div class="no-prev" id="midiaPrev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div>';
 
   if(d.tipo === 'texto'){
     corpo = '<div class="doc-body">' + esc(d.conteudo) + '</div>';
   } else if(d.arquivo || d.driveId){
     if(cat === 'pdf'){
-      // ITEM: antes, quem tinha permissão total (baixar+imprimir) sempre via
-      // o PDF através do player embutido do Google Drive (iframe de outro
-      // site — a rolagem dali é controlada pelo Drive, não por nós, e não dá
-      // pra "inserir" uma barra nossa dentro da página de outro domínio).
-      // Agora tentamos SEMPRE o nosso próprio visualizador primeiro (páginas
-      // renderizadas em canvas, dentro de uma div com rolagem 100% nossa) —
-      // só caímos para o iframe do Drive se não for possível ler os bytes do
-      // arquivo (o único caso realista: arquivo sem cópia local e a busca ao
-      // Drive falhar por CORS).
-      const aviso = protegido
-        ? '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div>'
-        : '<div class="no-prev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div>';
-      corpo = '<div class="pdf-restrito" id="pdfRestrito">' + aviso + '</div>';
-      pdfPendente = {doc: d, protegido, fallbackIframe: drivePrev};
-    }
+const aviso = protegido
+? '<div class="restrito-aviso"><i class="fa-solid fa-lock"></i> Carregando visualização protegida…</div>'
+: '<div class="no-prev" style="background:transparent;padding:30px"><i class="fa-solid fa-spinner fa-spin"></i>Carregando pré-visualização…</div>';
+corpo = '<div class="pdf-restrito" id="pdfRestrito">' + aviso + '</div>';
+pdfPendente = {doc: d, protegido, fallbackIframe: drivePrev};
+}
     else if(cat === 'img'){
-      corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><img class="prev-img" src="' + (d.arquivo ? d.arquivo : 'https://lh3.googleusercontent.com/d/' + d.driveId) + '" alt=""></div>';
+      if(d.arquivo){
+        corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><img class="prev-img" src="' + d.arquivo + '" alt=""></div>';
+      } else {
+        // ITEM 2: antes usava a URL pública lh3.googleusercontent.com/d/{id},
+        // que também depende do arquivo não estar restrito no Drive — agora
+        // busca os bytes pelo mesmo canal seguro (Apps Script) usado para
+        // PDF/Word/Excel.
+        corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '">' + placeholderMidia + '</div>';
+        imgPendente = {doc: d, fallbackIframe: drivePrev};
+      }
     }
     else if(cat === 'video'){
-      corpo = d.arquivo ? '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><video class="prev-media" controls src="' + d.arquivo + '"></video></div>' : '<iframe class="pdf-frame" scrolling="yes" src="' + drivePrev + '"></iframe>';
+      if(d.arquivo){
+        corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '"><video class="prev-media" controls src="' + d.arquivo + '"></video></div>';
+      } else {
+        corpo = '<div class="' + (protegido ? 'pdf-restrito' : '') + '">' + placeholderMidia + '</div>';
+        videoPendente = {doc: d, fallbackIframe: drivePrev};
+      }
     }
     else if(cat === 'audio' && d.arquivo){
       corpo = '<div style="padding:24px 0"><audio controls style="width:100%" src="' + d.arquivo + '"></audio></div>';
@@ -2428,6 +2618,9 @@ function modalVer(docId){
   bloqueioAtivo = protegido;
 
   const acoes =
+    (podeEmail
+      ? '<button class="btn btn-light" data-action="email-doc" data-id="' + d.id + '"><i class="fa-solid fa-envelope"></i> Enviar e-mail</button>'
+      : '<button class="btn btn-light" disabled title="Envio por e-mail não permitido"><i class="fa-solid fa-lock"></i> Enviar e-mail</button>') +
     (podeBaixar
       ? '<button class="btn btn-light" data-action="baixar-doc" data-id="' + d.id + '"><i class="fa-solid fa-download"></i> Baixar</button>'
       : '<button class="btn btn-light" disabled title="Download não permitido"><i class="fa-solid fa-lock"></i> Baixar</button>') +
@@ -2451,6 +2644,27 @@ function modalVer(docId){
     obterBuffer(alvo.doc)
       .then(buf => alvo.kind === 'word' ? renderDocx(buf, cont0) : renderXlsx(buf, cont0))
       .catch(falha);
+  }
+  if(imgPendente || videoPendente){
+    const alvo = imgPendente || videoPendente;
+    const isImg = !!imgPendente;
+    const cont = $('#midiaPrev');
+    const falhaMidia = () => {
+      if(alvo.fallbackIframe && cont && cont.parentElement){
+        cont.parentElement.innerHTML = '<iframe class="pdf-frame" scrolling="yes" referrerpolicy="no-referrer" src="' + esc(alvo.fallbackIframe) + '"></iframe>';
+      } else if(cont){
+        cont.innerHTML = '<i class="fa-solid ' + ci.ic + '"></i>Não foi possível carregar a pré-visualização.<br>Use "Baixar" para abrir no aplicativo correspondente.';
+      }
+    };
+    obterBuffer(alvo.doc).then(buf => {
+      if(!cont || !cont.parentElement) return;
+      const mime = alvo.doc.mime || (isImg ? 'image/*' : 'video/*');
+      const url = URL.createObjectURL(new Blob([buf], {type: mime}));
+      currentBlobUrl = url;
+      cont.parentElement.innerHTML = isImg
+        ? '<img class="prev-img" src="' + url + '" alt="">'
+        : '<video class="prev-media" controls src="' + url + '"></video>';
+    }).catch(falhaMidia);
   }
   if(pdfPendente){
     const alvo = pdfPendente;
@@ -2478,6 +2692,18 @@ function atualizarPcount(row){
   const n = $$('.ptog.on', row).length;
   const sp = $('.pcount', row);
   if(sp){ sp.textContent = n ? n + ' permissão' + (n>1?'s':'') : 'Sem acesso'; sp.className = 'pcount tag ' + (n ? 'tag-edit' : 'tag-view'); }
+}
+function modalEnviarEmailDoc(docId){
+  const d = DB.get('Documentos').find(x => x.id === docId); if(!d) return;
+  if(!permsDoc(d).includes('enviar_email')){ toast('Sem permissão para enviar este arquivo por e-mail.','error'); return; }
+  openModal('<h3><i class="fa-solid fa-envelope"></i> Enviar por e-mail</h3>' +
+    '<p class="modal-sub">O arquivo <b>' + esc(d.titulo) + '</b> será enviado como anexo.</p>' +
+    '<label class="campo">E-mail do destinatário<input id="eDestinatario" type="email" placeholder="nome@exemplo.com"></label>' +
+    '<label class="campo">Assunto<input id="eAssunto" value="' + esc('Documento: ' + (d.titulo || '')) + '"></label>' +
+    '<label class="campo">Mensagem (opcional)<textarea id="eMensagem" rows="4" placeholder="Segue em anexo o documento..."></textarea></label>' +
+    '<div class="modal-actions"><button class="btn btn-light" data-action="fechar-modal">Cancelar</button>' +
+    '<button class="btn btn-primary" data-action="confirmar-email-doc" data-id="' + d.id + '"><i class="fa-solid fa-paper-plane"></i> Enviar</button></div>');
+  setTimeout(() => { const i = $('#eDestinatario'); if(i) i.focus(); }, 60);
 }
 function modalCompartilhar(pastaId){
   const p = pastaPorId(pastaId); if(!p) return;
@@ -2566,19 +2792,32 @@ function renderConfig(){
       '<button class="btn btn-primary" data-action="salvar-config"><i class="fa-solid fa-floppy-disk"></i> Salvar alterações</button>' +
     '</div>' +
   '</section>' +
-  '<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
+  '<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-solid fa-clock"></i> Segurança da sessão</h2></div>' +
+    '<div class="cfg-body">' +
+      '<p class="modal-sub">Tempo de inatividade após o qual a sessão é encerrada automaticamente (o usuário volta para a tela de login). Válido para todos os usuários da empresa.</p>' +
+      '<div class="cfg-cols">' +
+        '<label class="campo">Tempo de inatividade (minutos)<input id="cfgInatividade" type="number" min="' + INATIVIDADE_MIN_MIN + '" max="' + INATIVIDADE_MAX_MIN + '" step="1" value="' + esc(e.tempoInatividadeMin || 30) + '"></label>' +
+      '</div>' +
+      '<p class="modal-sub" style="margin:6px 0 0">Mínimo ' + INATIVIDADE_MIN_MIN + ' minutos, máximo ' + INATIVIDADE_MAX_MIN + ' minutos. Clique em "Salvar alterações" para aplicar.</p>' +
+      '<button class="btn btn-primary" data-action="salvar-config"><i class="fa-solid fa-floppy-disk"></i> Salvar alterações</button>' +
+    '</div>' +
+  '</section>' +
+ 
+'<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-brands fa-google-drive"></i> Integração Google Drive + Sheets</h2><span id="syncBadge2"></span></div>' +
+/* 
     '<p class="modal-sub" style="padding:0 22px">O app busca <b>sempre</b> os dados da planilha (empresa, logotipo e usuários) ao abrir e no login, via <b>JSONP</b>. A URL do backend vem sempre da implantação atual do Apps Script (Code.gs) — não é editável por aqui. <b>Se as subpastas não aparecem no Drive</b>: 1) <b>Copiar código</b> abaixo; 2) na planilha, <b>Extensões → Apps Script</b>, apague o código velho e cole o novo; 3) <b>Implantar → Gerenciar implantações → lápis → Nova versão → Implantar</b>; 4) clique em <b>Verificar versão</b>.</p>' +
+*/
     '<div class="cfg-body"><div class="integ-row">' +
     '<button class="btn btn-light" data-action="verificar-versao"><i class="fa-solid fa-rotate"></i> Verificar versão</button>' +
     '<button class="btn btn-light" data-action="vincular-pastas-drive"><i class="fa-solid fa-folder-tree"></i> Sincronizar pastas do Drive</button>' +
     '<button class="btn btn-light" data-action="sincronizar-drive"><i class="fa-solid fa-arrows-rotate"></i> Sincronizar com o Drive</button>' +
     '<button class="btn btn-light" data-action="copiar-script"><i class="fa-solid fa-copy"></i> Copiar código</button></div>' +
-    '<p class="modal-sub" style="padding:0;margin-top:8px"><i class="fa-solid fa-circle-info"></i> "Sincronizar pastas do Drive" varre a árvore física de "SGD_Arquivos" e vincula/importa pastas e arquivos que já existem lá mas ainda não estão na planilha. Isso não roda mais sozinho ao abrir o app ou fazer login — só quando você clicar aqui.</p></div>' +
-  '</section>' +
-  '<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO ' + APP_VERSAO + '</h2></div>' +
-    '<pre class="code" id="gasCode"></pre>' +
+    //'<p class="modal-sub" style="padding:0;margin-top:8px"><i class="fa-solid fa-circle-info"></i> "Sincronizar pastas do Drive" varre a árvore física de "SGD_Arquivos" e vincula/importa pastas e arquivos que já existem lá mas ainda não estão na planilha. Isso não roda mais sozinho ao abrir o app ou fazer login — só quando você clicar aqui.</p></div>' +
+  //'</section>' +
+  //'<section class="card" style="margin-top:20px"><div class="card-head"><h2><i class="fa-solid fa-code"></i> Backend Apps Script (Sheets + Drive) — VERSÃO ' + APP_VERSAO + '</h2></div>' +
+    //'<pre class="code" id="gasCode"></pre>' +
   '</section></div>';
-  $('#gasCode').textContent = SCRIPT_GAS;
+ // $('#gasCode').textContent = SCRIPT_GAS;
   atualizarBadge();
 }
 
@@ -2871,10 +3110,23 @@ document.addEventListener('click', e => {
       const n = state.selecaoExcluidos.size;
       if(!n) break;
       modalConfirm('Excluir selecionados', 'Remover ' + n + ' registro' + (n>1?'s':'') + ' selecionado' + (n>1?'s':'') + ' do histórico de exclusões? Isso não afeta os arquivos/pastas em si, apenas este registro.', () => {
-        const restantes = DB.get('Excluidos').filter(r => !state.selecaoExcluidos.has(excluidoKey(r)));
-        guardarFolhaSeguro('Excluidos', restantes);
-        state.selecaoExcluidos.clear();
-        toast('Registro(s) removido(s) do histórico.'); renderExcluidos();
+        // CORREÇÃO: antes isto só apagava a cópia local (guardarFolhaSeguro),
+        // sem avisar o servidor — e como apiPush recusa gravar na folha
+        // "Excluidos", os registros voltavam no próximo pull (outra ação, ou
+        // um F5). Agora chama apiExcluirRegistrosExcluidos, que apaga de
+        // verdade as linhas na planilha; só atualiza a tela depois de o
+        // servidor confirmar.
+        if(!(session && session.token)){ toast('Sessão expirada.', 'error'); return; }
+        const chaves = Array.from(state.selecaoExcluidos);
+        toast('Removendo registro(s)…', 'info');
+        gasCall_('apiExcluirRegistrosExcluidos', [session.token, chaves]).then(res => {
+          if(!res || res.ok === false){ toast((res && res.erro) || 'Não foi possível remover os registros.', 'error'); return; }
+          marcarExcluidoHistorico_(chaves);
+          const restantes = DB.get('Excluidos').filter(r => !state.selecaoExcluidos.has(excluidoKey(r)));
+          guardarFolhaSeguro('Excluidos', restantes);
+          state.selecaoExcluidos.clear();
+          toast('Registro(s) removido(s) do histórico.'); renderExcluidos();
+        }).catch(() => toast('Falha de conexão ao remover os registros.', 'error'));
       });
       break;
     }
@@ -2987,6 +3239,13 @@ document.addEventListener('click', e => {
     case 'nova-pasta':
       if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
       modalNovaPasta(); break;
+    case 'renomear-pasta': {
+      const p = pastaPorId(id); if(!p) break;
+      const permsP = ehAdmin(u) ? ALL_PERMS.slice() : permsEff(u.id, p);
+      if(!(permsP.includes('editar') || permsP.includes('excluir_pasta'))){ toast('Sem permissão para renomear esta pasta.','error'); break; }
+      modalRenomearPasta(id);
+      break;
+    }
     case 'novo-doc':
       if(!permsAtuais().includes('upload')){ toast('Sem permissão de upload nesta pasta.','error'); break; }
       modalDoc(null); break;
@@ -3175,6 +3434,26 @@ document.addEventListener('click', e => {
       if(!permsDoc(d).includes('download')){ toast('Sem permissão de download para este arquivo. Solicite acesso ao administrador.','error'); break; }
       baixarArquivo(d); toast('Download iniciado.','info'); break;
     }
+    case 'email-doc': {
+      modalEnviarEmailDoc(id); break;
+    }
+    case 'confirmar-email-doc': {
+      const d = DB.get('Documentos').find(x => x.id === id); if(!d) break;
+      if(!permsDoc(d).includes('download')){ toast('Sem permissão para enviar este arquivo por e-mail.','error'); break; }
+      const destinatario = ($('#eDestinatario') || {}).value?.trim() || '';
+      const assunto = ($('#eAssunto') || {}).value?.trim() || '';
+      const mensagem = ($('#eMensagem') || {}).value?.trim() || '';
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destinatario)){ toast('Informe um e-mail de destino válido.','error'); break; }
+      const btn = el; btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enviando…';
+      Sync.enviarEmailDocumento(d.id, destinatario, assunto, mensagem).then(res => {
+        if(res && res.ok){ fecharModal(); toast('E-mail enviado com sucesso.'); }
+        else { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Enviar'; toast((res && res.erro) || 'Não foi possível enviar o e-mail.', 'error'); }
+      }).catch(() => {
+        btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Enviar';
+        toast('Não foi possível conectar ao servidor.','error');
+      });
+      break;
+    }
     case 'toggle-perm':
       el.classList.toggle('on');
       atualizarPcount(el.closest('.prow'));
@@ -3257,6 +3536,13 @@ document.addEventListener('click', e => {
       if(!ehAdmin(u)){ toast('Apenas administradores podem alterar as configurações.','error'); break; }
       const formats = $$('#viewRoot input[data-fmt]:checked').map(i => i.dataset.fmt);
       if(!formats.length){ toast('Selecione ao menos um formato de upload.','error'); break; }
+      const inatividadeEl = $('#cfgInatividade');
+      let tempoInatividadeMin = INATIVIDADE_PADRAO_MIN;
+      if(inatividadeEl){
+        tempoInatividadeMin = parseInt(inatividadeEl.value, 10);
+        if(!isFinite(tempoInatividadeMin)) tempoInatividadeMin = INATIVIDADE_PADRAO_MIN;
+        tempoInatividadeMin = Math.min(INATIVIDADE_MAX_MIN, Math.max(INATIVIDADE_MIN_MIN, tempoInatividadeMin));
+      }
       const obj = Object.assign({}, getEmpresa(), {
         nome: $('#cfgNome').value.trim(),
         fantasia: $('#cfgFantasia').value.trim(),
@@ -3269,9 +3555,11 @@ document.addEventListener('click', e => {
         email: $('#cfgEmail').value.trim(),
         site: $('#cfgSite').value.trim(),
         logo: cfgLogo || '',
-        formats: formats
+        formats: formats,
+        tempoInatividadeMin: tempoInatividadeMin
       });
       try{ setEmpresa(obj); }catch(err){ toast('Logotipo muito grande para o armazenamento local.','error'); break; }
+      reiniciarMonitorInatividade_();
       toast('Configurações salvas com sucesso!');
       renderApp();
       break;
@@ -3282,12 +3570,21 @@ document.addEventListener('click', e => {
       verificarVersao();
       break;
     case 'salvar-pasta': {
-      if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
       const nome = ($('#mNomePasta') || {}).value;
       if(!nome || !nome.trim()){ toast('Informe o nome da pasta.','error'); return; }
-      const pastas = DB.get('Pastas');
-      pastas.push({id: uid('f'), nome: nome.trim(), parentId: state.currentFolderId, criadaPor: u.id, criadaEm: Date.now()});
-      DB.set('Pastas', pastas); fecharModal(); toast('Pasta criada — sincronizando no Google Drive…'); renderDashboard(); break;
+      if(id){
+        const p = pastaPorId(id); if(!p) break;
+        const permsP = ehAdmin(u) ? ALL_PERMS.slice() : permsEff(u.id, p);
+        if(!(permsP.includes('editar') || permsP.includes('excluir_pasta'))){ toast('Sem permissão para renomear esta pasta.','error'); break; }
+        DB.set('Pastas', DB.get('Pastas').map(x => x.id === id ? Object.assign({}, x, {nome: nome.trim()}) : x));
+        fecharModal(); toast('Pasta renomeada.'); renderDashboard();
+      } else {
+        if(!permsAtuais().includes('criar_pasta')){ toast('Sem permissão para criar pastas.','error'); break; }
+        const pastas = DB.get('Pastas');
+        pastas.push({id: uid('f'), nome: nome.trim(), parentId: state.currentFolderId, criadaPor: u.id, criadaEm: Date.now()});
+        DB.set('Pastas', pastas); fecharModal(); toast('Pasta criada — sincronizando no Google Drive…'); renderDashboard();
+      }
+      break;
     }
     case 'salvar-doc': {
       const titulo = ($('#mTitulo') || {}).value.trim();
@@ -3445,6 +3742,35 @@ function repararDriveSeNecessario_(){
 
 /* V36 LOGIN: autenticacao por POST/HTTPS. A senha fica somente no corpo da requisicao
    e e processada no servidor. O backend mantem compatibilidade com contas salgadas e legadas. */
+// ITEM 5 (login lento): pré-busca o desafio de login assim que o usuário
+// sai do campo de e-mail (ex.: ao clicar/Tab para o campo de senha), para
+// que a chamada apiLoginDesafio já esteja resolvida (ou em andamento) antes
+// mesmo de ele terminar de digitar a senha e clicar em "Entrar".
+const loginEmailEl_ = $('#loginEmail');
+if(loginEmailEl_){
+  const dispararPrefetch_ = () => {
+    const email = loginEmailEl_.value.trim().toLowerCase();
+    if(!email || email.indexOf('@') === -1 || email.indexOf('.') === -1) return;
+    if(desafioPreFetch_ && desafioPreFetch_.email === email) return;
+    desafioPreFetch_ = {email, dados: null, obtidoEm: 0};
+    gasCall_('apiLoginDesafio', [email]).then(res => {
+      if(res && res.ok && res.nonce && desafioPreFetch_ && desafioPreFetch_.email === email){
+        desafioPreFetch_ = {email, dados: res, obtidoEm: Date.now()};
+      } else if(desafioPreFetch_ && desafioPreFetch_.email === email){
+        desafioPreFetch_ = null;
+      }
+    }).catch(() => { if(desafioPreFetch_ && desafioPreFetch_.email === email) desafioPreFetch_ = null; });
+  };
+  let prefetchDebounce_ = null;
+  loginEmailEl_.addEventListener('blur', dispararPrefetch_);
+  // Também tenta ao digitar (com debounce) — cobre autofill de gerenciador
+  // de senha e casos em que o "blur" não dispara de forma confiável.
+  loginEmailEl_.addEventListener('input', () => {
+    clearTimeout(prefetchDebounce_);
+    prefetchDebounce_ = setTimeout(dispararPrefetch_, 500);
+  });
+}
+
 $('#loginForm').addEventListener('submit', e => {
   e.preventDefault();
   const email = $('#loginEmail').value.trim().toLowerCase();
@@ -3503,6 +3829,12 @@ $('#menuToggle').addEventListener('click', () => $('#sidebar').classList.toggle(
    que já estiver salvo localmente — evita o "flash" do ícone genérico
    enquanto aguarda o Sync.pull para só então trocar pelo logotipo real. */
 aplicarMarca();
+// ITEM 3 (continuação): mostra o aviso de inatividade guardado antes do
+// refresh, uma única vez, e limpa a marca em seguida.
+try{
+  const msgReload = sessionStorage.getItem('rio_toast_pos_reload');
+  if(msgReload){ sessionStorage.removeItem('rio_toast_pos_reload'); setTimeout(() => toast(msgReload, 'info'), 200); }
+}catch(e){}
 try{
   seed();
   cleanupExemplos();
@@ -3514,25 +3846,7 @@ try{
   mostrarLogin();
 }
 
-// --- INÍCIO DA SINCRONIZAÇÃO AUTOMÁTICA ---
-function iniciarSincronizacaoAutomatica(){
-  // Verifica a cada 30 segundos se há novos arquivos no Drive
-  setInterval(function(){
-    // Só executa se o usuário estiver logado e o sistema de sync estiver ativo
-    if(typeof currentUser === 'function' && currentUser() && typeof Sync !== 'undefined' && Sync.url()){
-      if(typeof Sync.pullAll === 'function') Sync.pullAll();
-      if(typeof renderItens === 'function') renderItens();
-    }
-  }, 30000); // 30000 milissegundos = 30 segundos
-}
 
-// Inicia a função assim que a página carregar
-if(document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', iniciarSincronizacaoAutomatica);
-} else {
-  iniciarSincronizacaoAutomatica();
-}
-// --- FIM DA SINCRONIZAÇÃO AUTOMÁTICA ---
 
 </script>
 </body>
